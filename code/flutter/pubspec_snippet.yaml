@@ -1,0 +1,15 @@
+# Add these packages to your Flutter app's pubspec.yaml. The Flutter side only
+# decodes and plays a stored opus_raw clip. It makes no gateway call.
+
+dependencies:
+  # Fetch a stored clip from your own Laravel API.
+  http: ^1.2.2
+  # Play the decoded wav on web + Android + iOS.
+  just_audio: ^0.9.42
+  # Decode the raw libopus packets in-app, on web (wasm) and mobile (ffi), so
+  # opus plays even on iOS and Safari.
+  opus_codec_dart: ^3.0.5
+  # The native and wasm loader for opus_codec_dart. It gives the load() call used
+  # by initOpus(await opus_codec.load()). Confirm the exact name and version from
+  # the opus_codec_dart pub.dev example, then pin it here.
+  opus_codec: ^3.0.0
