@@ -10,8 +10,8 @@ description: Mint, rotate, revoke, and list frugale voice gateway API keys (cons
 Manage your tenant's `consumer` keys with your `customer_admin` key: mint a
 synth-only key, rotate it with a grace window, revoke it, list metadata.
 
-Read `../../runbooks/keys-lifecycle.md` for the exact requests (endpoints, bodies,
+Read `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/keys-lifecycle.md` for the exact requests (endpoints, bodies,
 the 90-day expiry clamp, the 300-second rotate grace).
 
 Prerequisite: a `customer_admin` bearer (the operator gives one per tenant) and
-the shell setup in `../../README.md`.
+the shell setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md`.

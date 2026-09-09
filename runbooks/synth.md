@@ -19,7 +19,7 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -X POST "$SYNTH/v1/audio/speech" \
   -d "{\"model\":\"hulotte\",\"input\":\"Bonjour le monde.\",\"voice\":\"$VOICE\",\"response_format\":\"wav\"}" \
   -o clip.wav
-# verify: file clip.wav -> RIFF/WAVE ; play: afplay clip.wav
+# check: `file clip.wav` prints RIFF/WAVE. play clip.wav in any audio player.
 ```
 
 ### Request fields

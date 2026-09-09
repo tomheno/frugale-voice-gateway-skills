@@ -11,10 +11,10 @@ Choose the `model` and `response_format` for a synth call. Both models clone the
 same enrolled voice. Discover the live model aliases via `GET /v1/models`. Do
 NOT hardcode them.
 
-Read `../../runbooks/models-and-formats.md` for the model list, the five formats
+Read `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/models-and-formats.md` for the model list, the five formats
 (`wav` / `mp3` / `opus` / `opus_raw` / `pcm`) + their content-types, and how to
 pick.
 
 Set the chosen values in the synth body (`frugale-tts-synth`).
 
-Prerequisite: the synth setup in `../../README.md` (a `consumer` bearer).
+Prerequisite: the synth setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md` (a `consumer` bearer).

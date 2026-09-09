@@ -11,7 +11,7 @@ Stream audio as it renders, instead of waiting for the whole clip. Advanced.
 Most integrations use the unary synth (`frugale-tts-synth`). Use streaming
 only when you play audio live.
 
-Read `../../runbooks/streaming.md` for the four doors: PCM chunks, WAV frames,
+Read `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/streaming.md` for the four doors: PCM chunks, WAV frames,
 the WSS mirror, and the OpenAI-Realtime WSS door, with the request shapes.
 
-Prerequisite: a `consumer` bearer and the shell setup in `../../README.md`.
+Prerequisite: a `consumer` bearer and the shell setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md`.
