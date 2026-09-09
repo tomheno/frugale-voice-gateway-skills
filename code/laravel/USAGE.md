@@ -7,7 +7,7 @@ Put your key + the SYNTH base URL in `.env` (never commit a key):
 
 ```env
 FRUGALE_SYNTH_URL=https://pro-tom--frugale-voice-gateway-prod.modal.run
-FRUGALE_KEY=v1.pk_....          # a CONSUMER key YOU minted. NEVER the customer_admin key.
+FRUGALE_KEY=v1.pk_xxxx.xxxx.xxxx   # a CONSUMER bearer (shape v1.<kid>.<sig>.<payload>). NEVER the customer_admin key.
 FRUGALE_VOICE=v-...             # a voice uid you enrolled (confirm via GET /v1/voices)
 ```
 
