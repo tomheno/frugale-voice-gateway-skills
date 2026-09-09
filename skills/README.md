@@ -1,10 +1,10 @@
-<!-- PUBLIC — distributable to customers. -->
+<!-- PUBLIC: distributable to customers. -->
 
-# Frugale voice — agent skills (soft index)
+# Frugale voice: agent skills (soft index)
 
 These skills are a soft index to the frugale voice gateway capabilities. Each
 skill is thin: it names one capability and points to the runbook that carries
-the exact requests. The runbooks are the content; the skills are the index.
+the exact requests. The runbooks are the content. The skills are the index.
 
 Load a skill when its capability matches the task, then follow the runbook it
 points to.

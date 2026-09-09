@@ -3,7 +3,7 @@ name: frugale-tts-keys
 description: Mint, rotate, revoke, and list frugale voice gateway API keys (consumer keys) from a customer_admin key. Use when an agent must provision or manage its own inference keys for the frugale TTS API.
 ---
 
-<!-- PUBLIC — distributable to customers. Soft index; the runbook carries the requests. -->
+<!-- PUBLIC: distributable to customers. Soft index. The runbook carries the requests. -->
 
 # frugale-tts-keys
 

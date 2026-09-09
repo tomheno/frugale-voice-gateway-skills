@@ -1,6 +1,6 @@
-<!-- PUBLIC — distributable to customers. -->
+<!-- PUBLIC: distributable to customers. -->
 
-# Runbook — synthesize
+# Runbook: synthesize
 
 Turn text into audio. Use a `consumer` key. Synthesize one text (`/v1/audio/speech`)
 or up to 16 texts in one call (`/v1/audio/speech/batch`).
@@ -36,8 +36,8 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 ## A batch
 
 Send up to 16 texts in one call. Run the single-synth call ONCE first to warm the
-backend. A cold batch returns HTTP 200 with every item failed, and `--retry` does
-not retry a 200, so an un-warmed batch writes an all-failed file.
+backend. A cold batch returns HTTP 200 with every item failed. `--retry` does not
+retry a 200, so an un-warmed batch writes an all-failed file.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
@@ -54,6 +54,6 @@ to get the audio bytes. For `opus_raw`, see `opus-raw-decode.md`.
 
 ## See also
 
-- `models-and-formats.md` — pick a model + a format.
-- `opus-raw-decode.md` — decode the compact batch format.
-- `streaming.md` — stream audio as it renders.
+- `models-and-formats.md`: pick a model + a format.
+- `opus-raw-decode.md`: decode the compact batch format.
+- `streaming.md`: stream audio as it renders.

@@ -1,6 +1,6 @@
-<!-- PUBLIC — distributable to customers. -->
+<!-- PUBLIC: distributable to customers. -->
 
-# Runbook — voices
+# Runbook: voices
 
 Add and manage voices. Voice-CRUD needs your `customer_admin` key. A `consumer`
 key can NOT add voices (it returns 403).
@@ -12,11 +12,11 @@ bearer).
 
 Send a reference wav and its EXACT transcript. The reply carries the voice `uid`.
 
-The reference wav MUST be 10 seconds or less, and the transcript MUST be exactly
-the words spoken in the clip. A longer clip desyncs the audio from the text, and
-synth then speaks the leftover reference words BEFORE your target text. The
+The reference wav MUST be 10 seconds or less. The transcript MUST be exactly the
+words spoken in the clip. A longer clip breaks sync between the audio and the
+text. Synth then speaks the leftover reference words BEFORE your target text. The
 gateway rejects a reference over 10 seconds with HTTP 400. Trim the clip to a
-clean pause under 10 seconds and match the transcript to it.
+clean pause under 10 seconds. Match the transcript to it.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
@@ -28,7 +28,7 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -X POST "$SYNTH/v1/voices/upload"
 ```
 
-Send `consent_to_backend_mirror=true` — the backend needs the reference. The
+Send `consent_to_backend_mirror=true`. The backend needs the reference. The
 reply carries the voice `uid`. Use that `uid` as the `voice` field at synth.
 
 ## List voices
@@ -67,5 +67,5 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 
 ## See also
 
-- `synth.md` — synthesize with the `uid` this runbook returns.
-- `keys-lifecycle.md` — the `customer_admin` key that authorizes voice-CRUD.
+- `synth.md`: synthesize with the `uid` this runbook returns.
+- `keys-lifecycle.md`: the `customer_admin` key that authorizes voice-CRUD.

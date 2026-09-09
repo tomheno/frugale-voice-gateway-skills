@@ -1,9 +1,9 @@
-<!-- PUBLIC — distributable to customers. -->
+<!-- PUBLIC: distributable to customers. -->
 
-# Runbook — key lifecycle
+# Runbook: key lifecycle
 
 Mint, rotate, revoke, and list your tenant's `consumer` keys. Use your
-`customer_admin` key. The operator gives you the `customer_admin` key once; you
+`customer_admin` key. The operator gives you the `customer_admin` key once. You
 self-serve every consumer key from it.
 
 Set your shell (see `../README.md`): `ADMIN`, `KEY` (your `customer_admin`
@@ -11,7 +11,7 @@ bearer).
 
 ## Mint a consumer key
 
-A delegated key is capped at 90 days. An omitted expiry defaults to 90 days. For
+The gateway caps a delegated key at 90 days. An omitted expiry defaults to 90 days. For
 a shorter expiry, add `expires_at` (unix seconds).
 
 ```bash
@@ -28,7 +28,7 @@ a client.
 ## Rotate a key
 
 Rotate by `kid`. You do NOT need the old bearer. `grace_secs` keeps the old key
-alive for that window, so you swap the new key in with no downtime. A
+alive for that window, so you replace the old key with no downtime. A
 `customer_admin` rotate caps `grace_secs` at 300 seconds.
 
 ```bash
@@ -38,7 +38,7 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -d '{"grace_secs":300}'
 ```
 
-The reply carries `new_kid` and `new_bearer` (the fresh key, emitted once).
+The reply carries `new_kid` and `new_bearer`. The gateway emits the fresh key once.
 
 ## Revoke a key
 
@@ -67,5 +67,5 @@ revoked flag), `next_cursor`, and `total_estimate`.
 
 ## See also
 
-- `synth.md` — use a consumer key to synthesize.
-- `voices.md` — a `customer_admin` key adds voices.
+- `synth.md`: use a consumer key to synthesize.
+- `voices.md`: a `customer_admin` key adds voices.

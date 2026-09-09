@@ -1,6 +1,6 @@
-<!-- PUBLIC — distributable to customers. -->
+<!-- PUBLIC: distributable to customers. -->
 
-# Runbook — decode opus_raw
+# Runbook: decode opus_raw
 
 `opus_raw` is the smallest format. It is bare libopus frames in an `OPUSRAW1`
 container, not a playable file. Store it upstream (small), then decode it in your
@@ -27,19 +27,19 @@ end-trim marker). This is inaudible. For sample-exact length, request `opus`
 ## Decode it
 
 `code/flutter/opus_raw_decoder.dart` decodes an `OPUSRAW1` clip to wav in Dart /
-Flutter. `OpusRaw.decode(bytes)` returns PCM + rate + channels;
+Flutter. `OpusRaw.decode(bytes)` returns PCM + rate + channels.
 `OpusRaw.toWav(bytes)` returns playable wav bytes. It guards a short/empty body,
 a bad channel count, and a zero-length packet.
 
 `code/flutter/playback_example.dart` fetches a stored clip from your backend,
 decodes it, and plays it. `code/flutter/pubspec_snippet.yaml` lists the packages.
 
-The decoder is illustrative. Any libopus binding decodes the same container:
-read the header, then feed each length-prefixed packet to the Opus decoder at the
-header's sample rate and channel count.
+The decoder is illustrative. Any libopus binding decodes the same container.
+Read the header. Then feed each length-prefixed packet to the Opus decoder at the
+header sample rate and channel count.
 
 ## See also
 
-- `synth.md` — request `opus_raw` (single or batch).
-- `code/laravel/USAGE.md` — a backend that stores `opus_raw`.
-- `models-and-formats.md` — the other formats.
+- `synth.md`: request `opus_raw` (single or batch).
+- `code/laravel/USAGE.md`: a backend that stores `opus_raw`.
+- `models-and-formats.md`: the other formats.

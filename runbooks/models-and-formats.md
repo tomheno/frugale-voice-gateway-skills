@@ -1,6 +1,6 @@
-<!-- PUBLIC — distributable to customers. -->
+<!-- PUBLIC: distributable to customers. -->
 
-# Runbook — models and formats
+# Runbook: models and formats
 
 Pick a voice model and an audio format at synth. Set the `model` and
 `response_format` fields in the synth body (`synth.md`).
@@ -8,7 +8,7 @@ Pick a voice model and an audio format at synth. Set the `model` and
 ## Models
 
 A model is a routing ALIAS. Both models clone the SAME enrolled voice, so you
-switch models without re-enrolling. Discover the live aliases — do NOT hardcode:
+switch models without re-enrolling. Discover the live aliases. Do NOT hardcode them:
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
@@ -41,9 +41,9 @@ one your player or pipeline wants.
 
 Any other value returns HTTP 400.
 
-The batch path uses `opus_raw` — small to store, decoded in the app.
+The batch path uses `opus_raw`. It is small to store. The app decodes it.
 
 ## See also
 
-- `synth.md` — set `model` + `response_format`.
-- `opus-raw-decode.md` — decode `opus_raw`.
+- `synth.md`: set `model` + `response_format`.
+- `opus-raw-decode.md`: decode `opus_raw`.

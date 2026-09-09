@@ -3,7 +3,7 @@ name: frugale-tts-voices
 description: Add and manage voices on the frugale voice gateway (upload a reference clip + transcript, list, get, update, delete). Use when an agent must enroll or manage a cloned voice for TTS. Needs a customer_admin key.
 ---
 
-<!-- PUBLIC — distributable to customers. Soft index; the runbook carries the requests. -->
+<!-- PUBLIC: distributable to customers. Soft index. The runbook carries the requests. -->
 
 # frugale-tts-voices
 

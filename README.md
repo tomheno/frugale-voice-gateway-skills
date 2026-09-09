@@ -1,6 +1,6 @@
-<!-- PUBLIC — distributable to customers. Source of truth: this repo's public/ tree. -->
+<!-- PUBLIC: distributable to customers. Source of truth: this repo's public/ tree. -->
 
-# Frugale voice gateway — agent runbooks
+# Frugale voice gateway: agent runbooks
 
 Drive the frugale text-to-speech API from your own agent or backend. Mint and
 manage keys, add voices, synthesize one text or a batch, pick a model and a
@@ -17,7 +17,7 @@ This tree is PUBLIC. It documents only the customer API surface.
 
 ## Auth
 
-Every request carries one header — your proxy key.
+Every request carries one header. Your proxy key.
 
 ```
 Authorization: Bearer <proxy-key>
@@ -31,7 +31,7 @@ Two key roles:
   it yourself from your `customer_admin`.
 
 A bearer prints ONCE, at mint or rotate. The gateway stores metadata only, never
-the bearer, so you can not read it back. Vault it. If a key leaks, rotate it.
+the bearer, so you can not read it back. Store it in a vault. If a key leaks, rotate it.
 
 Set your shell for the runbooks:
 

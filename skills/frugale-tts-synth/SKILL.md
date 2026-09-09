@@ -3,7 +3,7 @@ name: frugale-tts-synth
 description: Synthesize speech with the frugale voice gateway — one text (/v1/audio/speech) or a batch of up to 16 (/v1/audio/speech/batch). Use when an agent must turn text into audio. Needs a consumer key.
 ---
 
-<!-- PUBLIC — distributable to customers. Soft index; the runbook carries the requests. -->
+<!-- PUBLIC: distributable to customers. Soft index. The runbook carries the requests. -->
 
 # frugale-tts-synth
 
@@ -19,3 +19,5 @@ decode with `frugale-tts-opus-raw`. To stream audio live, see
 
 Warm the backend with one single synth before a batch (a cold batch returns 200
 with every item failed).
+
+Prerequisite: a `consumer` bearer and the shell setup in `../../README.md`.

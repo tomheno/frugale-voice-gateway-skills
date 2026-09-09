@@ -1,10 +1,10 @@
-<!-- PUBLIC — distributable to customers. -->
+<!-- PUBLIC: distributable to customers. -->
 
-# Runbook — streaming (advanced)
+# Runbook: streaming (advanced)
 
 Stream audio as it renders, instead of waiting for the whole clip. Use a
 `consumer` key. Most integrations use the unary `POST /v1/audio/speech`
-(`synth.md`); reach for streaming only when you play audio live as it arrives.
+(`synth.md`). Use streaming only when you play audio live as it arrives.
 
 Set your shell (see `../README.md`): `SYNTH`, `KEY` (a `consumer` bearer),
 `VOICE`.
@@ -39,10 +39,10 @@ curl -sS -N -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 `GET /v1/audio/speech/stream` and `GET /v1/realtime` are WebSocket upgrades, not
 cURL calls. Open a WebSocket with the `Authorization: Bearer <consumer>` header,
 then send the synth control frames. Use `/v1/realtime` for an OpenAI-Realtime
-client; use `/v1/audio/speech/stream` for a plain synth mirror that returns
+client. Use `/v1/audio/speech/stream` for a plain synth mirror that returns
 binary audio frames.
 
 ## See also
 
-- `synth.md` — the unary + batch paths (the common case).
-- `models-and-formats.md` — models + formats.
+- `synth.md`: the unary + batch paths (the common case).
+- `models-and-formats.md`: models + formats.
