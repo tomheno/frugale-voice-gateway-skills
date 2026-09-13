@@ -50,12 +50,13 @@ MIME type. These are the SAME keys a batch result uses, so one parser reads both
 `words` are your exact input words, timed in seconds. Without the field, the
 response is plain audio (unchanged).
 
-The clip MUST be 30 seconds or less. A longer clip returns HTTP 400 (long-audio
-alignment is coming). Word timestamps are not available on the streaming
-endpoints. In a batch, set `timestamp_granularities: ["word"]` at the top level.
-Each result then carries `words` AND `audio_duration`. `words` is null when the
-item failed OR the item audio was over 30 seconds. If you request alignment but
-the aligner is not configured, the batch returns HTTP 400 (not silent nulls).
+The clip MUST be 30 minutes (1800 seconds) or less; longer audio is windowed and
+stitched aligner-side. A clip over the limit returns HTTP 400. Word timestamps are
+not available on the streaming endpoints. In a batch, set
+`timestamp_granularities: ["word"]` at the top level. Each result then carries
+`words` AND `audio_duration`. `words` is null when the item failed OR the item
+audio was over the limit. If you request alignment but the aligner is not
+configured, the batch returns HTTP 400 (not silent nulls).
 
 ## A batch
 
