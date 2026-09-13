@@ -32,6 +32,30 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 | `response_format` | string | `wav` / `mp3` / `opus` / `opus_raw` / `pcm` (see `models-and-formats.md`). |
 | `speed` | float | 0.25 to 4.0. |
 | `lang` | string | ISO 639-1 (for example `fr`). Alias `languages`. |
+| `timestamp_granularities` | array | Set `["word"]` for word timestamps (see below). Omit for plain audio. |
+
+## Word timestamps (opt-in)
+
+Set `timestamp_granularities: ["word"]` to get the start and end time of each
+word. The gateway then returns JSON instead of raw audio:
+
+```json
+{ "audio_data": "<base64>", "media_type": "audio/wav", "words": [
+  { "word": "Bonjour", "start": 0.0, "end": 0.42 }
+], "audio_duration": 1.23 }
+```
+
+`audio_data` is the base64 of your chosen `response_format`. `media_type` is its
+MIME type. These are the SAME keys a batch result uses, so one parser reads both.
+`words` are your exact input words, timed in seconds. Without the field, the
+response is plain audio (unchanged).
+
+The clip MUST be 30 seconds or less. A longer clip returns HTTP 400 (long-audio
+alignment is coming). Word timestamps are not available on the streaming
+endpoints. In a batch, set `timestamp_granularities: ["word"]` at the top level.
+Each result then carries `words` AND `audio_duration`. `words` is null when the
+item failed OR the item audio was over 30 seconds. If you request alignment but
+the aligner is not configured, the batch returns HTTP 400 (not silent nulls).
 
 ## A batch
 
