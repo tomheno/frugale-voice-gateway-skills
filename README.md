@@ -12,8 +12,8 @@ This tree is PUBLIC. It documents only the customer API surface.
 
 | App | Base URL | Serves |
 |---|---|---|
-| SYNTH | `https://pro-tom--frugale-voice-gateway-prod.modal.run` | synth, batch, streaming, voices, models |
-| ADMIN | `https://pro-tom--frugale-voice-gateway-prod-admin.modal.run` | the key lifecycle (mint / rotate / revoke / list) |
+| SYNTH | `https://api-otem.confidential-intelligence.lu` | synth, batch, streaming, voices, models |
+| ADMIN | `https://admin-otem.confidential-intelligence.lu` | the key lifecycle (mint / rotate / revoke / list) |
 
 ## Auth
 
@@ -36,8 +36,8 @@ the bearer, so you can not read it back. Store it in a vault. If a key leaks, ro
 Set your shell for the runbooks:
 
 ```bash
-export ADMIN="https://pro-tom--frugale-voice-gateway-prod-admin.modal.run"
-export SYNTH="https://pro-tom--frugale-voice-gateway-prod.modal.run"
+export ADMIN="https://admin-otem.confidential-intelligence.lu"
+export SYNTH="https://api-otem.confidential-intelligence.lu"
 export KEY="<your proxy key>"
 ```
 
