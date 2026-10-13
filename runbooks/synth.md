@@ -81,4 +81,5 @@ to get the audio bytes. For `opus_raw`, see `opus-raw-decode.md`.
 
 - `models-and-formats.md`: pick a model + a format.
 - `opus-raw-decode.md`: decode the compact batch format.
-- `streaming.md`: stream audio as it renders.
+- `streaming.md`: stream audio as it renders, and the latency guide: which path
+  gives the first audio fastest, and how to tune a WebSocket client.

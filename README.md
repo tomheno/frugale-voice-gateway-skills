@@ -58,7 +58,7 @@ returns nothing, run it again.
 | `runbooks/synth.md` | synthesize one text or a batch (consumer) |
 | `runbooks/models-and-formats.md` | the models + the audio formats, and how to pick |
 | `runbooks/opus-raw-decode.md` | decode the compact `opus_raw` format in your app |
-| `runbooks/streaming.md` | stream audio as it renders (advanced) |
+| `runbooks/streaming.md` | stream audio as it renders (advanced), and the latency guide (HTTP stream or WSS, how to tune a client) |
 
 ## Limits
 
