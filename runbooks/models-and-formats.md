@@ -7,7 +7,7 @@ Pick a voice model and an audio format at synth. Set the `model` and
 
 ## Models
 
-A model is a routing ALIAS. Both models clone the SAME enrolled voice, so you
+A model is a routing ALIAS. All models clone the SAME enrolled voice, so you
 switch models without re-enrolling. Discover the live aliases. Do NOT hardcode them:
 
 ```bash
@@ -15,16 +15,20 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -H "Authorization: Bearer $KEY" "$SYNTH/v1/models"
 ```
 
-The reply is `{object:"list", data:[{id, owned_by:"frugale", description}]}`. The
-`id` is the alias you pass as `model`. An unknown alias returns HTTP 422
-`unknown_model_alias`.
+The reply is `{object:"list", data:[{id, object:"model", owned_by:"frugale", description}]}`.
+The `id` is the alias you pass as `model`. An unknown alias returns HTTP 422
+`unknown_model_alias`. Omit `model` to use the tenant default. The default alias
+is set per deployment.
 
 Current aliases:
 
-| model | notes |
-|---|---|
-| `hulotte` | the default. Balanced quality and speed. Use it first. |
-| `chevechette` | an alternate model with a different character. Try it when `hulotte` does not suit a text. |
+| model | tier | languages | best for |
+|---|---|---|---|
+| `hulotte` | default, fast | de, en, es, fr, it, ja, ko, pt, ru, zh | real-time and general use. Start here. |
+| `chevechette` | recommended | de, en, fr, it, ja, ko, pt, ru, zh | narration, non real-time, and batch. |
+| `linotte` | recommended | de, en, fr, it, ja, ko, pt, ru, zh | narration, non real-time, and batch. |
+| `lyre` | experimental | n/a | early adopters only. |
+| `lb-2610-small-preview` | experimental | lb (Luxembourgish) | early adopters only. A lyre variant. |
 
 ## Formats
 
@@ -39,9 +43,11 @@ one your player or pipeline wants.
 | `opus_raw` | `audio/x-opus-raw` | the smallest. Bare libopus frames (`OPUSRAW1`). Decode in the app (`opus-raw-decode.md`). Plays on every platform after the decode. |
 | `pcm` | `audio/pcm` | raw PCM16 samples, no header. For a pipeline that wants raw samples. |
 
-Any other value returns HTTP 400.
+On `/v1/audio/speech` an unknown value returns 400. In a batch, that item fails
+with an `error` object and the batch is still 200.
 
-The batch path uses `opus_raw`. It is small to store. The app decodes it.
+A batch returns `wav` unless you set `response_format`. Use `opus` or `mp3` for a
+small payload.
 
 ## See also
 

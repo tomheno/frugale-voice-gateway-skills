@@ -12,7 +12,7 @@ update, or delete voices. Voice-CRUD needs a `customer_admin` key (a consumer
 key returns 403).
 
 Read `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/voices.md` for the exact requests. Note the hard rule: a
-reference clip MUST be 10 seconds or less, or the gateway returns HTTP 400.
+reference clip MUST be 12 seconds or less, or the gateway returns HTTP 400.
 
 The add-voice reply carries the voice `uid` you pass as `voice` at synth
 (`frugale-tts-synth`).

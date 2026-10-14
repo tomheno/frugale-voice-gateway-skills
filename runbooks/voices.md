@@ -10,13 +10,15 @@ bearer).
 
 ## Add a voice
 
-Send a reference wav and its EXACT transcript. The reply carries the voice `uid`.
+Send a reference wav. Always send its EXACT transcript too. The transcript is
+optional, but an exact one gives the best result. The reply carries the voice `uid`.
 
-The reference wav MUST be 10 seconds or less. The transcript MUST be exactly the
-words spoken in the clip. A longer clip breaks sync between the audio and the
-text. Synth then speaks the leftover reference words BEFORE your target text. The
-gateway rejects a reference over 10 seconds with HTTP 400. Trim the clip to a
-clean pause under 10 seconds. Match the transcript to it.
+The reference clip MUST be 12 seconds or less. The gateway checks this at
+enrollment and rejects a longer clip with HTTP 400. The audio MUST be at most
+10 MiB (the JSON base64 form counts the base64 text). The transcript MUST be
+exactly the words spoken in the clip. A longer clip breaks sync between the audio
+and the text. Synth then speaks the leftover reference words BEFORE your target
+text. Trim the clip to a clean pause under 12 seconds. Match the transcript to it.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
@@ -28,8 +30,10 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -X POST "$SYNTH/v1/voices/upload"
 ```
 
-Send `consent_to_backend_mirror=true`. The backend needs the reference. The
-reply carries the voice `uid`. Use that `uid` as the `voice` field at synth.
+Send `consent_to_backend_mirror=true` so the backend can hold the reference. The
+optional `identifier` field is echoed back. The reply carries the voice `uid`.
+Use that `uid` as the `voice` field at synth. A voice created through the gateway
+is already `ready`.
 
 ## List voices
 
@@ -55,15 +59,18 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -H "Authorization: Bearer $KEY" -X DELETE "$SYNTH/v1/voices/<uid>"
 ```
 
-## Confirm a draft, check existence
+## Confirm a legacy draft, check existence
+
+Confirm applies only to a legacy draft. A voice created through the gateway is
+already `ready`.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -H "Authorization: Bearer $KEY" -X POST "$SYNTH/v1/voices/<uid>/confirm"
-
-curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
-  -H "Authorization: Bearer $KEY" "$SYNTH/v1/voices/<uid>/exists"
 ```
+
+To check that a voice exists, call `GET /v1/voices/<uid>` and read the status.
+A 404 means the voice does not exist.
 
 ## See also
 

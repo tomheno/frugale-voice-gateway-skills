@@ -1,0 +1,804 @@
+openapi: 3.1.0
+info:
+  title: Frugale Voice Gateway API
+  version: 0.10.18
+  description: |
+    OpenAI-compatible text-to-speech HTTP API. It covers speech synthesis, batch
+    synthesis, voice management, the model alias list, and the proxy-key
+    lifecycle (admin plane).
+
+    Every call sends `Authorization: Bearer <token>`. Three credential kinds exist:
+    an operator admin JWT, a proxy key (`v1.<kid>.<sig>.<payload>`, role `consumer`
+    or `customer_admin`), and a federated tenant JWT. Each operation lists the kinds
+    it accepts.
+
+    Limits. A non-admin synth request body is at most 64 KiB. A batch request body
+    is at most 4 MiB. A voice `audio_base64` is at most 10 MiB.
+
+    Errors. Gateway errors have the shape `{"detail": "<code>"}` where the code is
+    stable and machine-readable. An unknown model alias returns 422 with this
+    shape (code `unknown_model_alias`), not the field-validation shape.
+
+    Streaming over WebSocket is described in the companion `asyncapi.yaml`.
+servers:
+  - url: https://api-otem.confidential-intelligence.lu
+    description: Primary (EU)
+  - url: https://api-otem.confidential-intelligence.com
+    description: Secondary (EU)
+security:
+  - bearerAuth: []
+tags:
+  - name: synth
+    description: Speech synthesis.
+  - name: voices
+    description: Provisioned voice management.
+  - name: models
+    description: Model alias list.
+  - name: proxy-keys
+    description: |
+      Proxy-key lifecycle (admin plane). These routes are served on the admin
+      host, not the public synth host. Every admin response carries
+      `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and
+      `X-Frame-Options: DENY`. A malformed JSON body returns a plain-text 400,
+      415, or 422.
+paths:
+  /v1/audio/speech:
+    post:
+      tags: [synth]
+      operationId: createSpeech
+      summary: Synthesize speech
+      description: |
+        Returns binary audio in the requested `response_format`. When
+        `timestamp_granularities` is `["word"]` the response is JSON with word
+        timings instead.
+
+        Auth: consumer, customer_admin, operator admin JWT, or federated tenant JWT.
+
+        The request body is at most 64 KiB for a non-admin caller. An unknown
+        model alias returns 422 `unknown_model_alias` (an `ErrorDetail` body).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeechRequest'
+      responses:
+        '200':
+          description: Audio bytes, or word-timing JSON.
+          content:
+            audio/wav: &audio
+              schema: {type: string, format: binary}
+            audio/pcm: *audio
+            audio/ogg: *audio
+            audio/x-opus-raw: *audio
+            audio/mpeg: *audio
+            application/json:
+              schema:
+                type: object
+                description: Audio and word timings when `timestamp_granularities` is `["word"]`.
+                properties:
+                  audio_data: {type: string, description: Base64 audio.}
+                  media_type: {type: string}
+                  words:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        word: {type: string}
+                        start: {type: number}
+                        end: {type: number}
+                  audio_duration: {type: number}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '502': {$ref: '#/components/responses/BadGateway'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        '504': {$ref: '#/components/responses/GatewayTimeout'}
+  /v1/audio/speech/batch:
+    post:
+      tags: [synth]
+      operationId: createSpeechBatch
+      summary: Synthesize a batch
+      description: |
+        Synthesizes 1 to 16 items in one call. The call returns 200 even when
+        single items fail. Read the per-item result. The request body is at most
+        4 MiB.
+
+        Auth: consumer, customer_admin, operator admin JWT, or federated tenant JWT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeechBatchRequest'
+      responses:
+        '200':
+          description: Per-item results.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SpeechBatchResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '502': {$ref: '#/components/responses/BadGateway'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        '504': {$ref: '#/components/responses/GatewayTimeout'}
+  /v1/voices:
+    get:
+      tags: [voices]
+      operationId: listVoices
+      summary: List voices
+      description: |
+        Auth: operator admin JWT or customer_admin. Unknown query params return 400.
+      parameters:
+        - {name: lang, in: query, schema: {type: string}, description: ISO 639-1 filter.}
+        - {name: status, in: query, schema: {type: string, enum: [ready, draft, all]}}
+        - {name: sort_by, in: query, schema: {type: string, enum: [name, created_at], default: created_at}}
+        - {name: sort_order, in: query, schema: {type: string, enum: [asc, desc], default: desc}}
+      responses:
+        '200':
+          description: Voice list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/VoiceResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/VoiceForbidden'}
+    post:
+      tags: [voices]
+      operationId: createVoice
+      summary: Create a voice from base64 audio
+      description: |
+        Auth: operator admin JWT or customer_admin. The reference clip must be 12
+        seconds or less. A longer clip gives HTTP 400. `audio_base64` is at most
+        10 MiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, audio_base64]
+              properties:
+                audio_base64: {type: string, description: Base64 audio. At most 10 MiB.}
+                name:
+                  type: string
+                  description: 'Allowed: letters, digits, space, - _ . Other characters are removed. Truncated to 100 characters. 400 if empty after cleaning.'
+                lang:
+                  type: string
+                  default: fr
+                  description: ISO 639-1. 400 if not served.
+                transcript:
+                  type: string
+                  description: Optional. If omitted the server may transcribe the clip with ASR. Without ASR the transcript is stored empty and synthesis degrades. Always send the exact words.
+                identifier: {type: string, description: Client external id echoed back.}
+                consent_to_backend_mirror:
+                  type: boolean
+                  default: false
+                  description: Default false. Without consent the gateway cannot hold the reference for external backends, so synthesis on those backends fails with voice not available. Set true to enable it.
+      responses:
+        '201':
+          description: Voice created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VoiceResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/VoiceForbidden'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /v1/voices/upload:
+    post:
+      tags: [voices]
+      operationId: uploadVoice
+      summary: Create a voice from a multipart upload
+      description: |
+        Auth: operator admin JWT or customer_admin. The reference clip must be 12
+        seconds or less. A longer clip gives HTTP 400.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, audio]
+              properties:
+                audio: {type: string, format: binary}
+                name:
+                  type: string
+                  description: 'Allowed: letters, digits, space, - _ . Other characters are removed. Truncated to 100 characters. 400 if empty after cleaning.'
+                lang:
+                  type: string
+                  default: fr
+                  description: ISO 639-1. 400 if not served.
+                transcript:
+                  type: string
+                  description: Optional. If omitted the server may transcribe the clip with ASR. Without ASR the transcript is stored empty and synthesis degrades. Always send the exact words.
+                identifier: {type: string, description: Client external id echoed back.}
+                consent_to_backend_mirror:
+                  type: boolean
+                  default: false
+                  description: Default false. Without consent the gateway cannot hold the reference for external backends, so synthesis on those backends fails with voice not available. Set true to enable it. The multipart upload also accepts true, 1, yes, on.
+      responses:
+        '201':
+          description: Voice created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VoiceResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/VoiceForbidden'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /v1/voices/{uid}:
+    parameters:
+      - {$ref: '#/components/parameters/VoiceUid'}
+    get:
+      tags: [voices]
+      operationId: getVoice
+      summary: Get one voice
+      description: 'Auth: operator admin JWT or customer_admin.'
+      responses:
+        '200':
+          description: The voice.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VoiceResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/VoiceForbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      tags: [voices]
+      operationId: updateVoice
+      summary: Update a voice
+      description: 'Auth: operator admin JWT or customer_admin.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 'Allowed: letters, digits, space, - _ . Other characters are removed. Truncated to 100 characters. 400 if empty after cleaning.'
+                is_favorite: {type: boolean}
+      responses:
+        '200':
+          description: The updated voice.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VoiceResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/VoiceForbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [voices]
+      operationId: deleteVoice
+      summary: Delete a voice
+      description: |
+        Auth: operator admin JWT or customer_admin. The delete leaves a GDPR
+        tombstone. A voice that is a pack default gives 409.
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [uid, deleted]
+                properties:
+                  uid: {type: string}
+                  deleted: {type: boolean}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/VoiceForbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The voice is a pack default.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: voice_is_pack_default}
+        '502': {$ref: '#/components/responses/BadGateway'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/voices/{uid}/confirm:
+    parameters:
+      - {$ref: '#/components/parameters/VoiceUid'}
+    post:
+      tags: [voices]
+      operationId: confirmVoice
+      summary: Confirm a draft voice
+      description: |
+        Auth: operator admin JWT or customer_admin. Voices created through the
+        gateway are already ready. Confirm applies only to a legacy draft.
+      responses:
+        '200':
+          description: The confirmed voice.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VoiceResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/VoiceForbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Voices created through the gateway are already ready. Confirm applies only to a legacy draft.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+  /v1/models:
+    get:
+      tags: [models]
+      operationId: listModels
+      summary: List model aliases
+      description: |
+        Returns the model aliases served now. The list comes from live runtime
+        config, so read it instead of hard-coding values.
+
+        Auth: consumer, customer_admin, operator admin JWT, or federated tenant JWT.
+      responses:
+        '200':
+          description: Alias list.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /admin/proxy-keys/mint:
+    servers: &adminServers
+      - url: https://admin-otem.confidential-intelligence.com
+        description: Admin host. The public synth host does not serve admin routes.
+    post:
+      tags: [proxy-keys]
+      operationId: mintProxyKey
+      summary: Mint a proxy key
+      description: |
+        The bearer is returned once. Store it at once. Omitted `expires_at` gives
+        90 days. A customer_admin key is limited to 90 days. Operator-minted keys
+        can last up to 180 days. An `expires_at` in the past gives 400.
+
+        A customer_admin key can mint only consumer keys for its own customer_id.
+        The role `customer_admin` is operator-only.
+
+        On a 500 no bearer is issued and no state changes, so a retry is safe.
+
+        Auth: customer_admin key (or the operator secret).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tier, customer_id]
+              properties:
+                tier: {type: string, const: standard}
+                customer_id: {type: string}
+                expires_at: {type: integer, description: Unix seconds.}
+                role:
+                  type: string
+                  enum: [consumer, customer_admin]
+                  default: consumer
+                  description: The role `customer_admin` is operator-only.
+      responses:
+        '200':
+          description: The new key. The `bearer` field shows once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProxyKeyMintResponse'}
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              examples:
+                invalid_customer_id: {value: {detail: invalid_customer_id}}
+                invalid_expires_at: {value: {detail: invalid_expires_at}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/AdminForbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /admin/proxy-keys/{kid}/rotate:
+    servers: *adminServers
+    parameters:
+      - {$ref: '#/components/parameters/Kid'}
+    post:
+      tags: [proxy-keys]
+      operationId: rotateProxyKey
+      summary: Rotate a proxy key
+      description: |
+        Returns a successor bearer. Default grace_secs is 0: the old key is
+        revoked at once. A customer_admin value above 300 is lowered to 300. The
+        successor gets a fresh 90-day expiry and keeps the same tier,
+        customer_id, and role.
+
+        A customer_admin cannot manage customer_admin keys.
+
+        On a 500 no bearer is issued and no state changes, so a retry is safe.
+
+        Auth: customer_admin key (or the operator secret).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                grace_secs: {type: integer, minimum: 0, default: 0}
+                reason: {type: string}
+            example: {}
+      responses:
+        '200':
+          description: The successor key. The `new_bearer` field shows once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProxyKeyRotateResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/AdminForbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The key is already superseded.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: proxy_key_already_superseded}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /admin/proxy-keys/{kid}:
+    servers: *adminServers
+    parameters:
+      - {$ref: '#/components/parameters/Kid'}
+    get:
+      tags: [proxy-keys]
+      operationId: getProxyKey
+      summary: Get one proxy key record
+      description: |
+        A customer_admin cannot manage customer_admin keys.
+
+        Auth: customer_admin key (or the operator secret).
+      responses:
+        '200':
+          description: The key record.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProxyKeyRecord'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [proxy-keys]
+      operationId: revokeProxyKey
+      summary: Revoke a proxy key now
+      description: |
+        The revoke takes effect within about 10 seconds. A customer_admin cannot
+        revoke a customer_admin kid (404 `proxy_key_not_found`).
+
+        Auth: customer_admin key (or the operator secret).
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [kid, revoked_at]
+                properties:
+                  kid: {type: string}
+                  revoked_at: {type: integer}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /admin/proxy-keys:
+    servers: *adminServers
+    get:
+      tags: [proxy-keys]
+      operationId: listProxyKeys
+      summary: List proxy key records
+      description: |
+        Metadata only, cursor paged. `total_estimate` is the count before
+        pagination. A customer_admin sees only its own consumer keys.
+
+        Auth: customer_admin key (or the operator secret).
+      parameters:
+        - {name: cursor, in: query, schema: {type: string}, description: Cursor from the previous page.}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: tier, in: query, schema: {type: string}}
+        - {name: minted_by, in: query, schema: {type: string}, description: Filter by the kid of the minting customer_admin key.}
+        - {name: include_revoked, in: query, schema: {type: boolean, default: false}}
+        - {name: include_expired, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: A page of key records.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/ProxyKeyRecord'}
+                  next_cursor: {type: [string, 'null']}
+                  total_estimate:
+                    type: [integer, 'null']
+                    description: Count before pagination.
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer <token>`. The token is an operator admin JWT, a
+        proxy key (`v1.<kid>.<sig>.<payload>`), or a federated tenant JWT. A
+        missing header or a non-Bearer scheme returns 401 with a
+        `WWW-Authenticate` header for the `Bearer` scheme. A structurally
+        malformed token returns 400 `malformed_bearer`.
+  parameters:
+    VoiceUid:
+      name: uid
+      in: path
+      required: true
+      schema: {type: string, pattern: '^[A-Za-z0-9_-]{1,128}$'}
+    Kid:
+      name: kid
+      in: path
+      required: true
+      schema: {type: string}
+      description: Proxy key id.
+  responses:
+    BadRequest:
+      description: Bad request. For example `malformed_bearer` or an invalid field value.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    Unauthorized:
+      description: Missing or bad credential.
+      headers:
+        WWW-Authenticate:
+          schema: {type: string, example: Bearer}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+          example: {detail: unauthorized}
+    VoiceForbidden:
+      description: A consumer key or any non customer_admin bearer is not allowed for voice CRUD.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+          example: {detail: proxy_key_not_authorized_for_voice_crud}
+    AdminForbidden:
+      description: A customer_admin key cannot mint a customer_admin key.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+          example: {detail: admin_cannot_mint_admin}
+    NotFound:
+      description: Not found.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    Gone:
+      description: The voice was deleted.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    PayloadTooLarge:
+      description: The request body is over the size cap.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    TooManyRequests:
+      description: Rate or concurrency limit reached. Retry later.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    BadGateway:
+      description: An upstream service returned an error.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    ServiceUnavailable:
+      description: The service or backend is not available now. Retry later.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    GatewayTimeout:
+      description: An upstream service timed out.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    InternalError:
+      description: Internal error.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+    ValidationError:
+      description: Request validation failed. An unknown model alias returns 422 `unknown_model_alias` with an `ErrorDetail` body instead.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ValidationErrorDetail'}
+  schemas:
+    SpeechRequest:
+      type: object
+      description: Fields not listed here are not part of the public contract.
+      required: [input]
+      properties:
+        input:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Text to speak. The alias `text` is also accepted.
+        model:
+          type: string
+          description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
+          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview]
+        voice:
+          type: string
+          default: default
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: Voice uid of a stored voice, or `default` (the tenant default voice). Alias `voice_id`.
+        response_format:
+          type: string
+          enum: [wav, mp3, opus, opus_raw, pcm]
+          default: wav
+          description: 'wav audio/wav. pcm audio/pcm (16-bit LE, no header). opus audio/ogg. opus_raw audio/x-opus-raw. mp3 audio/mpeg.'
+        lang:
+          type: string
+          description: ISO 639-1 code. The alias `languages` is also accepted.
+        timestamp_granularities:
+          type: array
+          items: {type: string, enum: [word]}
+          description: Only `word` is honored. With `["word"]` the response is JSON.
+    SpeechBatchItem:
+      type: object
+      description: Fields not listed here are not part of the public contract.
+      required: [input]
+      properties:
+        input: {type: string, description: Text to speak. The alias `text` is also accepted.}
+        voice: {type: string}
+        response_format: {type: string, enum: [wav, mp3, opus, opus_raw, pcm]}
+        language: {type: string, description: ISO 639-1 code. The alias `lang` is also accepted.}
+        timestamp_granularities:
+          type: array
+          items: {type: string, enum: [word]}
+    SpeechBatchRequest:
+      type: object
+      description: Fields not listed here are not part of the public contract.
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 16
+          description: 1 to 16 items.
+          items: {$ref: '#/components/schemas/SpeechBatchItem'}
+        model:
+          type: string
+          description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
+          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview]
+        voice: {type: string}
+        response_format: {type: string, enum: [wav, mp3, opus, opus_raw, pcm]}
+        language: {type: string, description: ISO 639-1 code. The alias `lang` is also accepted.}
+        timestamp_granularities:
+          type: array
+          items: {type: string, enum: [word]}
+    SpeechBatchResult:
+      type: object
+      required: [index, status]
+      properties:
+        index: {type: integer}
+        status: {type: string, enum: [success, error]}
+        audio_data: {type: string, description: Base64 audio.}
+        media_type: {type: string}
+        usage:
+          type: object
+          properties:
+            input_tokens: {type: integer}
+            output_tokens: {type: integer}
+            total_tokens: {type: integer}
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message: {type: string}
+            type: {type: string}
+        words:
+          type: array
+          items:
+            type: object
+            properties:
+              word: {type: string}
+              start: {type: number}
+              end: {type: number}
+        words_error:
+          type: string
+          description: Set when alignment was requested, synthesis succeeded, and no words came back. The item keeps `audio_data` and `audio_duration` and omits `words`. Known values are aligner_unavailable, aligner_rejected, over_align_cap, missing_samples, resample_failed. New values can appear.
+        audio_duration: {type: number}
+    SpeechBatchResponse:
+      type: object
+      required: [id, results, total, succeeded, failed]
+      properties:
+        id: {type: string, example: 'speech-batch-<uuid>'}
+        results:
+          type: array
+          items: {$ref: '#/components/schemas/SpeechBatchResult'}
+        total: {type: integer}
+        succeeded: {type: integer}
+        failed: {type: integer}
+    VoiceResponse:
+      type: object
+      properties:
+        uid: {type: string}
+        name: {type: string}
+        lang: {type: string}
+        duration_s: {type: number}
+        transcript: {type: string}
+        identifier: {type: string, description: 'Client-supplied external id, empty if none.'}
+        created_at: {type: string}
+        status: {type: string, enum: [ready, draft]}
+        is_favorite: {type: boolean}
+    ProxyKeyRecord:
+      type: object
+      required: [kid, tier, customer_id, expires_at, issued_at, role]
+      properties:
+        kid: {type: string}
+        tier: {type: string}
+        customer_id: {type: string}
+        expires_at: {type: integer}
+        issued_at: {type: integer}
+        revoked_at: {type: [integer, 'null']}
+        superseded_by: {type: [string, 'null']}
+        role: {type: string, enum: [consumer, customer_admin]}
+        minted_by:
+          type: [string, 'null']
+          description: kid of the customer_admin key that minted this key.
+    ProxyKeyMintResponse:
+      type: object
+      properties:
+        kid: {type: string}
+        bearer:
+          type: string
+          description: The full key `v1.<kid>.<sig>.<payload>`. Shown once.
+        tier: {type: string}
+        customer_id: {type: string}
+        expires_at: {type: integer}
+    ProxyKeyRotateResponse:
+      type: object
+      properties:
+        old_kid: {type: string}
+        new_kid: {type: string}
+        new_bearer:
+          type: string
+          description: The successor key. Shown once.
+        expires_at: {type: integer}
+    ErrorDetail:
+      type: object
+      required: [detail]
+      properties:
+        detail: {type: string, description: A stable machine-readable code., example: unauthorized}
+    ValidationErrorDetail:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              type: {type: string}
+              loc:
+                type: array
+                items: {type: [string, integer]}
+              msg: {type: string}

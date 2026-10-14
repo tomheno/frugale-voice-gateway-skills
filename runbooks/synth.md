@@ -30,7 +30,6 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 | `voice` | string | a voice `uid`, or `default`. Alias `voice_id`. |
 | `model` | string | a model alias (see `models-and-formats.md`). Omit -> the default. An unknown alias -> 422. |
 | `response_format` | string | `wav` / `mp3` / `opus` / `opus_raw` / `pcm` (see `models-and-formats.md`). |
-| `speed` | float | 0.25 to 4.0. |
 | `lang` | string | ISO 639-1 (for example `fr`). Alias `languages`. |
 | `timestamp_granularities` | array | Set `["word"]` for word timestamps (see below). Omit for plain audio. |
 
@@ -54,8 +53,9 @@ The clip MUST be 30 minutes (1800 seconds) or less; longer audio is windowed and
 stitched aligner-side. A clip over the limit returns HTTP 400. Word timestamps are
 not available on the streaming endpoints. In a batch, set
 `timestamp_granularities: ["word"]` at the top level. Each result then carries
-`words` AND `audio_duration`. `words` is null when the item failed OR the item
-audio was over the limit. If you request alignment but the aligner is not
+`words` AND `audio_duration`. A failed batch item carries `error`. A succeeded
+item whose alignment fails keeps its audio and `audio_duration`, omits `words`,
+and carries `words_error`. If you request alignment but the aligner is not
 configured, the batch returns HTTP 400 (not silent nulls).
 
 ## A batch

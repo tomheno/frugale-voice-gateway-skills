@@ -12,8 +12,10 @@ This tree is PUBLIC. It documents only the customer API surface.
 
 | App | Base URL | Serves |
 |---|---|---|
-| SYNTH | `https://pro-tom--frugale-voice-gateway-prod.modal.run` | synth, batch, streaming, voices, models |
-| ADMIN | `https://pro-tom--frugale-voice-gateway-prod-admin.modal.run` | the key lifecycle (mint / rotate / revoke / list) |
+| SYNTH | `https://api-otem.confidential-intelligence.lu` | synth, batch, streaming, voices, models |
+| ADMIN | `https://admin-otem.confidential-intelligence.com` | the key lifecycle (mint / rotate / revoke / list) |
+
+The SYNTH host also answers at `https://api-otem.confidential-intelligence.com`.
 
 ## Auth
 
@@ -26,7 +28,7 @@ Authorization: Bearer <proxy-key>
 Two key roles:
 
 - `customer_admin`. Your admin key. Mint, rotate, and revoke your own consumer
-  keys. Add and manage voices. The operator gives you ONE per tenant.
+  keys. Add and manage voices. The operator issues it to your tenant.
 - `consumer`. A synth-only key. Put this in the backend that calls synth. Mint
   it yourself from your `customer_admin`.
 
@@ -36,18 +38,19 @@ the bearer, so you can not read it back. Store it in a vault. If a key leaks, ro
 Set your shell for the runbooks:
 
 ```bash
-export ADMIN="https://pro-tom--frugale-voice-gateway-prod-admin.modal.run"
-export SYNTH="https://pro-tom--frugale-voice-gateway-prod.modal.run"
+export ADMIN="https://admin-otem.confidential-intelligence.com"
+export SYNTH="https://api-otem.confidential-intelligence.lu"
 export KEY="<your proxy key>"
 ```
 
 ## Cold start
 
 The apps keep one warm replica. A first call after a long idle can still boot a
-container (40 to 150 seconds). Every runbook cURL carries
+backend (up to 8 minutes). Every runbook cURL carries
 `--retry 12 --retry-delay 15 --retry-all-errors` to re-send while the app boots,
-and `-L --max-redirs 60` to follow the Modal boot redirect. If a first call
-returns nothing, run it again.
+which covers about 3 minutes. For a fully cold backend, raise `--retry` (for
+example `--retry 40`). The `-L --max-redirs 60` flags follow the boot redirect.
+If a first call returns nothing, run it again.
 
 ## Runbooks
 
@@ -65,6 +68,14 @@ returns nothing, run it again.
 - A batch carries at most 16 items.
 - A consumer key a customer_admin mints is capped at 90 days. Rotate before it
   expires.
-- A voice reference clip MUST be 10 seconds or less (a longer clip is rejected
+- A voice reference clip MUST be 12 seconds or less (a longer clip is rejected
   with HTTP 400). See `runbooks/voices.md`.
 - Voices and synth belong to your tenant.
+
+## Machine-readable specs
+
+Two spec files describe the full API. Load them in an agent or a code generator.
+
+- `openapi.yaml`: the HTTP API (OpenAPI 3.1).
+- `asyncapi.yaml`: the two WSS doors (AsyncAPI 3.0).
+- `runbooks/api-specs.md`: how to load them and the hard limits.

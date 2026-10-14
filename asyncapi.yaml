@@ -1,0 +1,485 @@
+asyncapi: 3.0.0
+info:
+  title: Frugale Voice Gateway Streaming API
+  version: 0.10.19
+  description: |
+    Two WebSocket doors for streaming speech synthesis. The HTTP API is in the
+    companion `openapi.yaml`.
+servers:
+  primary:
+    host: api-otem.confidential-intelligence.lu
+    protocol: wss
+    description: Primary (EU)
+  secondary:
+    host: api-otem.confidential-intelligence.com
+    protocol: wss
+    description: Secondary (EU)
+defaultContentType: application/json
+channels:
+  speechStream:
+    address: /v1/audio/speech/stream
+    title: Stream door
+    description: |
+      Upgrade with HTTP GET and `Authorization: Bearer <token>`. The gateway checks
+      the token BEFORE the upgrade. A bad token gives HTTP 401 with no WebSocket
+      close. Today authentication is the `Authorization: Bearer <token>` header on
+      the upgrade. A short-lived browser ticket in `Sec-WebSocket-Protocol` is planned
+      and not yet available.
+
+      Limits: frame cap 10 MiB. The first frame must arrive within 15 s. Idle limit
+      60 s. Session limit 300 s. The server sends a ping every 20 s. Streaming
+      audio is `pcm` only. Read the sample rate from `audio.start.sample_rate`.
+
+      Flow: send `session.config` first. Send it within 15 s. A frame that arrives
+      before it is buffered. Then send `input.text` frames. Complete sentences are
+      synthesized as soon as the text arrives. `input.done` flushes buffered text
+      with no sentence end. The server answers with `audio.start`, binary PCM
+      chunks, `audio.done`, then `session.done`. `session.done` ends one utterance,
+      not the connection. Send `session.close` to end the connection.
+
+      Close codes: 1000 normal. 1001 going away or draining. 1008 client fault
+      (bad first frame, no config in 15 s, unknown model alias, a request that
+      sends `ref_audio` or `ref_text`, bad voice). 1011 internal or upstream fault.
+      1013 try again later (admission shed or backend warming). 1006 is an edge
+      drop only.
+    messages:
+      sessionConfig: {$ref: '#/components/messages/SessionConfig'}
+      inputText: {$ref: '#/components/messages/InputText'}
+      inputDone: {$ref: '#/components/messages/InputDone'}
+      sessionClose: {$ref: '#/components/messages/SessionClose'}
+      audioStart: {$ref: '#/components/messages/AudioStart'}
+      audioChunk: {$ref: '#/components/messages/AudioChunk'}
+      audioDone: {$ref: '#/components/messages/AudioDone'}
+      sessionDone: {$ref: '#/components/messages/SessionDone'}
+      error: {$ref: '#/components/messages/StreamError'}
+  realtime:
+    address: /v1/realtime
+    title: Realtime door (OpenAI-Realtime wire)
+    description: |
+      Upgrade with HTTP GET and `Authorization: Bearer <token>`. The gateway checks
+      the token BEFORE the upgrade. A bad token gives HTTP 401 with no WebSocket
+      close. Today authentication is the `Authorization: Bearer <token>` header on
+      the upgrade. A short-lived browser ticket in `Sec-WebSocket-Protocol` is planned
+      and not yet available.
+
+      Limits: frame cap 10 MiB. The first frame must arrive within 15 s. Idle limit
+      60 s. Session limit 300 s. The server sends a ping every 20 s. Audio is
+      PCM16 at 24000 Hz, always, base64 inside JSON.
+
+      Flow: the server sends `session.created` first. The first client frame must
+      be `session.update`, within 15 s. Any other first frame closes the connection
+      with 1008. `session.update` takes two shapes, and neither is strictly
+      required. The flat shape is `session: {voice, model, lang}`. The nested shape
+      is `session: {model, lang, audio: {output: {voice}}}`. The nested shape makes
+      the server emit `response.output_audio.delta` and `response.output_audio.done`.
+      The flat shape makes the server emit the legacy `response.audio.delta` and
+      `response.audio.done`. Inline clone keys are not accepted. Then send
+      `conversation.item.create`, then `response.create`. `response.create` is the
+      only commit trigger. `response.cancel` drops in-flight audio.
+
+      Close codes: 1000 normal. 1001 going away or draining. 1008 client fault
+      (non-`session.update` first frame, no config in 15 s, unknown model alias,
+      bad voice). 1011 internal or upstream fault, including a backend rate other
+      than 24000 Hz. 1013 try again later (admission shed or backend warming).
+      1006 is an edge drop only.
+    messages:
+      sessionCreated: {$ref: '#/components/messages/SessionCreated'}
+      sessionUpdate: {$ref: '#/components/messages/SessionUpdate'}
+      sessionUpdated: {$ref: '#/components/messages/SessionUpdated'}
+      conversationItemCreate: {$ref: '#/components/messages/ConversationItemCreate'}
+      responseCreate: {$ref: '#/components/messages/ResponseCreate'}
+      responseCancel: {$ref: '#/components/messages/ResponseCancel'}
+      responseCreated: {$ref: '#/components/messages/ResponseCreated'}
+      audioDelta: {$ref: '#/components/messages/ResponseOutputAudioDelta'}
+      audioDoneEvent: {$ref: '#/components/messages/ResponseOutputAudioDone'}
+      legacyAudioDelta: {$ref: '#/components/messages/ResponseAudioDelta'}
+      legacyAudioDoneEvent: {$ref: '#/components/messages/ResponseAudioDone'}
+      responseDone: {$ref: '#/components/messages/ResponseDone'}
+      realtimeError: {$ref: '#/components/messages/RealtimeError'}
+operations:
+  speechStreamSend:
+    action: send
+    title: Client frames on the stream door
+    channel: {$ref: '#/channels/speechStream'}
+    messages:
+      - $ref: '#/channels/speechStream/messages/sessionConfig'
+      - $ref: '#/channels/speechStream/messages/inputText'
+      - $ref: '#/channels/speechStream/messages/inputDone'
+      - $ref: '#/channels/speechStream/messages/sessionClose'
+  speechStreamReceive:
+    action: receive
+    title: Server frames on the stream door
+    channel: {$ref: '#/channels/speechStream'}
+    messages:
+      - $ref: '#/channels/speechStream/messages/audioStart'
+      - $ref: '#/channels/speechStream/messages/audioChunk'
+      - $ref: '#/channels/speechStream/messages/audioDone'
+      - $ref: '#/channels/speechStream/messages/sessionDone'
+      - $ref: '#/channels/speechStream/messages/error'
+  realtimeSend:
+    action: send
+    title: Client events on the realtime door
+    channel: {$ref: '#/channels/realtime'}
+    messages:
+      - $ref: '#/channels/realtime/messages/sessionUpdate'
+      - $ref: '#/channels/realtime/messages/conversationItemCreate'
+      - $ref: '#/channels/realtime/messages/responseCreate'
+      - $ref: '#/channels/realtime/messages/responseCancel'
+  realtimeReceive:
+    action: receive
+    title: Server events on the realtime door
+    channel: {$ref: '#/channels/realtime'}
+    messages:
+      - $ref: '#/channels/realtime/messages/sessionCreated'
+      - $ref: '#/channels/realtime/messages/sessionUpdated'
+      - $ref: '#/channels/realtime/messages/responseCreated'
+      - $ref: '#/channels/realtime/messages/audioDelta'
+      - $ref: '#/channels/realtime/messages/audioDoneEvent'
+      - $ref: '#/channels/realtime/messages/legacyAudioDelta'
+      - $ref: '#/channels/realtime/messages/legacyAudioDoneEvent'
+      - $ref: '#/channels/realtime/messages/responseDone'
+      - $ref: '#/channels/realtime/messages/realtimeError'
+components:
+  messages:
+    SessionConfig:
+      name: session.config
+      summary: First frame. Sets voice and options.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SessionConfigPayload'}
+    InputText:
+      name: input.text
+      summary: Text to speak.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/InputTextPayload'}
+    InputDone:
+      name: input.done
+      summary: Flushes buffered text that has no sentence end.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/TypeOnlyInputDone'}
+    SessionClose:
+      name: session.close
+      summary: Ends the connection.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/TypeOnlySessionClose'}
+    AudioStart:
+      name: audio.start
+      summary: Start of one sentence of audio.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/AudioStartPayload'}
+    AudioChunk:
+      name: audio chunk
+      summary: Binary frame. Raw PCM, no header.
+      contentType: application/octet-stream
+      payload:
+        type: string
+        format: binary
+        description: Raw 16-bit little-endian PCM. Read the rate from `audio.start.sample_rate`.
+    AudioDone:
+      name: audio.done
+      summary: End of one sentence of audio.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/AudioDonePayload'}
+    SessionDone:
+      name: session.done
+      summary: End of one utterance. Not the connection.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SessionDonePayload'}
+    StreamError:
+      name: error
+      summary: Non-fatal error for a client-frame fault.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/StreamErrorPayload'}
+    SessionCreated:
+      name: session.created
+      summary: First server event.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SessionEventPayload'}
+    SessionUpdate:
+      name: session.update
+      summary: First client event. Sets voice, model, language. Flat or nested shape.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SessionUpdatePayload'}
+    SessionUpdated:
+      name: session.updated
+      summary: Session settings accepted.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SessionEventPayload'}
+    ConversationItemCreate:
+      name: conversation.item.create
+      summary: Adds the text to speak.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/ConversationItemCreatePayload'}
+    ResponseCreate:
+      name: response.create
+      summary: Commits the text and starts audio.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/RealtimeEvent'}
+    ResponseCancel:
+      name: response.cancel
+      summary: Drops in-flight audio.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/RealtimeEvent'}
+    ResponseCreated:
+      name: response.created
+      summary: A response started.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/ResponseCreatedPayload'}
+    ResponseOutputAudioDelta:
+      name: response.output_audio.delta
+      summary: One audio chunk, sent with the nested session.update shape. The `delta` field is base64 PCM16 at 24000 Hz.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/AudioDeltaPayload'}
+    ResponseOutputAudioDone:
+      name: response.output_audio.done
+      summary: Audio for the response is complete. Sent with the nested session.update shape.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/AudioDonePayloadRealtime'}
+    ResponseAudioDelta:
+      name: response.audio.delta
+      summary: Legacy audio chunk, sent with the flat session.update shape. The `delta` field is base64 PCM16 at 24000 Hz.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/LegacyAudioDeltaPayload'}
+    ResponseAudioDone:
+      name: response.audio.done
+      summary: Legacy end of audio, sent with the flat session.update shape.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/LegacyAudioDonePayload'}
+    ResponseDone:
+      name: response.done
+      summary: The response ended. Check response.status.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/ResponseDonePayload'}
+    RealtimeError:
+      name: error
+      summary: Error event.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/RealtimeErrorPayload'}
+  schemas:
+    SessionConfigPayload:
+      type: object
+      required: [type]
+      properties:
+        type: {const: session.config}
+        voice:
+          type: string
+          description: Voice id of a stored voice (v-...), or default.
+        model:
+          type: string
+          description: Model alias. A free string. Read the live list from `GET /v1/models`.
+          example: my-model-alias
+        sample_rate:
+          type: integer
+          description: Accepted and ignored. Read the real rate from audio.start.sample_rate.
+        lang: {type: string, description: ISO 639-1.}
+        ref_audio:
+          type: string
+          description: Not available to proxy-key callers. A request that sends it is closed 1008.
+        ref_text:
+          type: string
+          description: Not available to proxy-key callers. A request that sends it is closed 1008.
+    InputTextPayload:
+      type: object
+      required: [type, text]
+      properties:
+        type: {const: input.text}
+        text: {type: string}
+    TypeOnlyInputDone:
+      type: object
+      required: [type]
+      properties:
+        type: {const: input.done}
+    TypeOnlySessionClose:
+      type: object
+      required: [type]
+      properties:
+        type: {const: session.close}
+    SessionDonePayload:
+      type: object
+      required: [type]
+      properties:
+        type: {const: session.done}
+        utterance_index: {type: integer}
+        total_sentences: {type: integer}
+    AudioStartPayload:
+      type: object
+      required: [type]
+      properties:
+        type: {const: audio.start}
+        utterance_index: {type: integer}
+        sentence_index: {type: integer}
+        sentence_text: {type: string}
+        format: {type: string, example: pcm}
+        sample_rate: {type: integer, description: Real PCM rate of the audio that follows.}
+    AudioDonePayload:
+      type: object
+      required: [type]
+      properties:
+        type: {const: audio.done}
+        utterance_index: {type: integer}
+        sentence_index: {type: integer}
+        total_bytes: {type: integer}
+        error: {type: [boolean, string, 'null']}
+    StreamErrorPayload:
+      type: object
+      required: [type, message]
+      properties:
+        type: {const: error}
+        message: {type: string}
+        error_type: {type: string}
+    RealtimeEvent:
+      type: object
+      required: [type]
+      additionalProperties: true
+      properties:
+        type: {type: string}
+        event_id: {type: string}
+    SessionEventPayload:
+      type: object
+      required: [type]
+      properties:
+        type: {type: string}
+        event_id: {type: string}
+        session:
+          type: object
+          properties:
+            id: {type: string}
+            object: {type: string}
+    ResponseCreatedPayload:
+      type: object
+      required: [type]
+      properties:
+        type: {const: response.created}
+        event_id: {type: string}
+        response:
+          type: object
+          properties:
+            id: {type: string}
+            object: {type: string}
+            status: {type: string}
+    ResponseDonePayload:
+      type: object
+      required: [type]
+      properties:
+        type: {const: response.done}
+        event_id: {type: string}
+        response:
+          type: object
+          properties:
+            id: {type: string}
+            object: {type: string}
+            status:
+              type: string
+              enum: [completed, cancelled, failed]
+            status_details:
+              type: [object, 'null']
+    SessionUpdatePayload:
+      type: object
+      required: [type, session]
+      properties:
+        type: {const: session.update}
+        session:
+          type: object
+          description: |
+            Neither shape is strictly required. Flat shape: `{voice, model, lang}`.
+            Nested shape: `{model, lang, audio: {output: {voice}}}`. The nested shape
+            makes the server emit `response.output_audio.delta` and
+            `response.output_audio.done`. The flat shape makes the server emit
+            `response.audio.delta` and `response.audio.done`.
+          properties:
+            voice:
+              type: string
+              description: Voice id of a stored voice (v-...), or default. Flat shape.
+            model:
+              type: string
+              description: Model alias. A free string.
+              example: my-model-alias
+            lang: {type: string}
+            audio:
+              type: object
+              description: Nested shape.
+              properties:
+                output:
+                  type: object
+                  properties:
+                    voice:
+                      type: string
+                      description: Voice id of a stored voice (v-...), or default.
+    ConversationItemCreatePayload:
+      type: object
+      required: [type, item]
+      properties:
+        type: {const: conversation.item.create}
+        item:
+          type: object
+          required: [type, content]
+          properties:
+            type: {const: message}
+            content:
+              type: array
+              items:
+                type: object
+                required: [type, text]
+                properties:
+                  type: {const: input_text}
+                  text: {type: string}
+    AudioDeltaPayload:
+      type: object
+      required: [type, delta]
+      properties:
+        type: {const: response.output_audio.delta}
+        event_id: {type: string}
+        response_id: {type: string}
+        item_id: {type: string}
+        output_index: {type: integer}
+        content_index: {type: integer}
+        delta:
+          type: string
+          contentEncoding: base64
+          description: Base64 PCM16 little-endian, 24000 Hz.
+    AudioDonePayloadRealtime:
+      type: object
+      required: [type]
+      properties:
+        type: {const: response.output_audio.done}
+        event_id: {type: string}
+        response_id: {type: string}
+        item_id: {type: string}
+        output_index: {type: integer}
+        content_index: {type: integer}
+    LegacyAudioDeltaPayload:
+      type: object
+      required: [type, delta]
+      properties:
+        type: {const: response.audio.delta}
+        event_id: {type: string}
+        response_id: {type: string}
+        item_id: {type: string}
+        output_index: {type: integer}
+        content_index: {type: integer}
+        delta:
+          type: string
+          contentEncoding: base64
+          description: Base64 PCM16 little-endian, 24000 Hz.
+    LegacyAudioDonePayload:
+      type: object
+      required: [type]
+      properties:
+        type: {const: response.audio.done}
+        event_id: {type: string}
+        response_id: {type: string}
+        item_id: {type: string}
+        output_index: {type: integer}
+        content_index: {type: integer}
+    RealtimeErrorPayload:
+      type: object
+      required: [type, error]
+      properties:
+        type: {const: error}
+        event_id: {type: string}
+        error:
+          type: object
+          properties:
+            type: {type: string}
+            code: {type: [string, 'null']}
+            message: {type: string}
+            param: {type: [string, 'null']}
