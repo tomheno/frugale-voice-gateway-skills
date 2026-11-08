@@ -56,6 +56,9 @@ paths:
 
         The request body is at most 64 KiB for a non-admin caller. An unknown
         model alias returns 422 `unknown_model_alias` (an `ErrorDetail` body).
+
+        A voice id that does not exist returns 404 `voice_not_found`. A deleted
+        voice returns 410 `voice_tombstoned`.
       requestBody:
         required: true
         content:
@@ -90,6 +93,7 @@ paths:
                   audio_duration: {type: number}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/VoiceNotFound'}
         '410': {$ref: '#/components/responses/Gone'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '422': {$ref: '#/components/responses/ValidationError'}
@@ -106,6 +110,10 @@ paths:
         Synthesizes 1 to 16 items in one call. The call returns 200 even when
         single items fail. Read the per-item result. The request body is at most
         4 MiB.
+
+        An item with a voice id that does not exist fails on its own with
+        `error.type` `voice_not_found`. The call still returns 200, and the other
+        items are not affected.
 
         Auth: consumer, customer_admin, operator admin JWT, or federated tenant JWT.
       requestBody:
@@ -245,7 +253,10 @@ paths:
       tags: [voices]
       operationId: getVoice
       summary: Get one voice
-      description: 'Auth: operator admin JWT or customer_admin.'
+      description: |
+        Auth: operator admin JWT or customer_admin.
+
+        An absent voice returns 404 `voice_not_found`.
       responses:
         '200':
           description: The voice.
@@ -256,6 +267,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/VoiceForbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
     patch:
       tags: [voices]
       operationId: updateVoice
@@ -588,6 +600,14 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
+    VoiceNotFound:
+      description: |
+        The voice id does not exist. Create the voice, or use a voice id that
+        `GET /v1/voices` lists.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+          example: {detail: voice_not_found}
     Gone:
       description: The voice was deleted.
       content:
@@ -712,7 +732,10 @@ components:
           required: [message, type]
           properties:
             message: {type: string}
-            type: {type: string}
+            type:
+              type: string
+              description: A stable error token. `voice_not_found` means the voice id does not exist. New values can appear.
+              examples: [voice_not_found]
         words:
           type: array
           items:
