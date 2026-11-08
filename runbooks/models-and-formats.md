@@ -7,7 +7,7 @@ Pick a voice model and an audio format at synth. Set the `model` and
 
 ## Models
 
-A model is a routing ALIAS. All models clone the SAME enrolled voice, so you
+A model is an ALIAS. All models clone the SAME enrolled voice, so you
 switch models without re-enrolling. Discover the live aliases. Do NOT hardcode them:
 
 ```bash
@@ -17,8 +17,7 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 
 The reply is `{object:"list", data:[{id, object:"model", owned_by:"frugale", description}]}`.
 The `id` is the alias you pass as `model`. An unknown alias returns HTTP 422
-`unknown_model_alias`. Omit `model` to use the tenant default. The default alias
-is set per deployment.
+`unknown_model_alias`. Omit `model` to use the tenant default.
 
 Current aliases:
 

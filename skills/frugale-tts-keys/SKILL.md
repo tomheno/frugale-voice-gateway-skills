@@ -13,5 +13,5 @@ synth-only key, rotate it with a grace window, revoke it, list metadata.
 Read `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/keys-lifecycle.md` for the exact requests (endpoints, bodies,
 the 90-day expiry clamp, the 300-second rotate grace).
 
-Prerequisite: a `customer_admin` bearer (the operator gives one per tenant) and
+Prerequisite: a `customer_admin` bearer (we give one per tenant) and
 the shell setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md`.

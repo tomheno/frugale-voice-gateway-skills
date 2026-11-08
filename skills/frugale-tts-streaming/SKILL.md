@@ -19,7 +19,7 @@ the WSS mirror, and the OpenAI-Realtime WSS door, with the request shapes.
 The runbook section "Latency: choose the path and tune the client" has the
 measured numbers and the rules. In short:
 
-- One short utterance you play live: HTTP stream (`"stream": true`).
+- One short utterance you play live: HTTP stream (`POST /tts/stream`).
 - One long text, whole file: unary `POST /v1/audio/speech`.
 - An interactive agent: ONE WSS session for the whole conversation.
 - Open the WSS socket early. Send `session.config` once, before you have text.

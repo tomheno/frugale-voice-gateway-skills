@@ -5,14 +5,13 @@ info:
   description: |
     OpenAI-compatible text-to-speech HTTP API. It covers speech synthesis, batch
     synthesis, voice management, the model alias list, and the proxy-key
-    lifecycle (admin plane).
+    lifecycle.
 
-    Every call sends `Authorization: Bearer <token>`. Three credential kinds exist:
-    an operator admin JWT, a proxy key (`v1.<kid>.<sig>.<payload>`, role `consumer`
-    or `customer_admin`), and a federated tenant JWT. Each operation lists the kinds
-    it accepts.
+    Every call sends `Authorization: Bearer <token>`. Two credential kinds exist:
+    a proxy key (role `consumer` or `customer_admin`) and a federated tenant JWT.
+    Each operation lists the kinds it accepts.
 
-    Limits. A non-admin synth request body is at most 64 KiB. A batch request body
+    Limits. A synth request body is at most 64 KiB. A batch request body
     is at most 4 MiB. A voice `audio_base64` is at most 10 MiB.
 
     Errors. Gateway errors have the shape `{"detail": "<code>"}` where the code is
@@ -36,7 +35,7 @@ tags:
     description: Model alias list.
   - name: proxy-keys
     description: |
-      Proxy-key lifecycle (admin plane). These routes are served on the admin
+      Proxy-key lifecycle. These routes are served on the admin
       host, not the public synth host. Every admin response carries
       `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and
       `X-Frame-Options: DENY`. A malformed JSON body returns a plain-text 400,
@@ -52,9 +51,9 @@ paths:
         `timestamp_granularities` is `["word"]` the response is JSON with word
         timings instead.
 
-        Auth: consumer, customer_admin, operator admin JWT, or federated tenant JWT.
+        Auth: consumer, customer_admin, or federated tenant JWT.
 
-        The request body is at most 64 KiB for a non-admin caller. An unknown
+        The request body is at most 64 KiB. An unknown
         model alias returns 422 `unknown_model_alias` (an `ErrorDetail` body).
 
         A voice id that does not exist returns 404 `voice_not_found`. A deleted
@@ -115,7 +114,7 @@ paths:
         `error.type` `voice_not_found`. The call still returns 200, and the other
         items are not affected.
 
-        Auth: consumer, customer_admin, operator admin JWT, or federated tenant JWT.
+        Auth: consumer, customer_admin, or federated tenant JWT.
       requestBody:
         required: true
         content:
@@ -143,7 +142,7 @@ paths:
       operationId: listVoices
       summary: List voices
       description: |
-        Auth: operator admin JWT or customer_admin. Unknown query params return 400.
+        Auth: customer_admin key. Unknown query params return 400.
       parameters:
         - {name: lang, in: query, schema: {type: string}, description: ISO 639-1 filter.}
         - {name: status, in: query, schema: {type: string, enum: [ready, draft, all]}}
@@ -165,7 +164,7 @@ paths:
       operationId: createVoice
       summary: Create a voice from base64 audio
       description: |
-        Auth: operator admin JWT or customer_admin. The reference clip must be 12
+        Auth: customer_admin key. The reference clip must be 12
         seconds or less. A longer clip gives HTTP 400. `audio_base64` is at most
         10 MiB.
       requestBody:
@@ -186,12 +185,12 @@ paths:
                   description: ISO 639-1. 400 if not served.
                 transcript:
                   type: string
-                  description: Optional. If omitted the server may transcribe the clip with ASR. Without ASR the transcript is stored empty and synthesis degrades. Always send the exact words.
+                  description: Optional. A missing transcript can lower the quality. Always send the exact words.
                 identifier: {type: string, description: Client external id echoed back.}
                 consent_to_backend_mirror:
                   type: boolean
                   default: false
-                  description: Default false. Without consent the gateway cannot hold the reference for external backends, so synthesis on those backends fails with voice not available. Set true to enable it.
+                  description: Default false. Set true to allow a copy of the reference clip on the servers that run synthesis. Without consent, synthesis with this voice can fail with voice not available.
       responses:
         '201':
           description: Voice created.
@@ -209,7 +208,7 @@ paths:
       operationId: uploadVoice
       summary: Create a voice from a multipart upload
       description: |
-        Auth: operator admin JWT or customer_admin. The reference clip must be 12
+        Auth: customer_admin key. The reference clip must be 12
         seconds or less. A longer clip gives HTTP 400.
       requestBody:
         required: true
@@ -229,12 +228,12 @@ paths:
                   description: ISO 639-1. 400 if not served.
                 transcript:
                   type: string
-                  description: Optional. If omitted the server may transcribe the clip with ASR. Without ASR the transcript is stored empty and synthesis degrades. Always send the exact words.
+                  description: Optional. A missing transcript can lower the quality. Always send the exact words.
                 identifier: {type: string, description: Client external id echoed back.}
                 consent_to_backend_mirror:
                   type: boolean
                   default: false
-                  description: Default false. Without consent the gateway cannot hold the reference for external backends, so synthesis on those backends fails with voice not available. Set true to enable it. The multipart upload also accepts true, 1, yes, on.
+                  description: Default false. Set true to allow a copy of the reference clip on the servers that run synthesis. Without consent, synthesis with this voice can fail with voice not available. The multipart upload also accepts true, 1, yes, on.
       responses:
         '201':
           description: Voice created.
@@ -254,7 +253,7 @@ paths:
       operationId: getVoice
       summary: Get one voice
       description: |
-        Auth: operator admin JWT or customer_admin.
+        Auth: customer_admin key.
 
         An absent voice returns 404 `voice_not_found`.
       responses:
@@ -272,7 +271,7 @@ paths:
       tags: [voices]
       operationId: updateVoice
       summary: Update a voice
-      description: 'Auth: operator admin JWT or customer_admin.'
+      description: 'Auth: customer_admin key.'
       requestBody:
         required: true
         content:
@@ -300,8 +299,8 @@ paths:
       operationId: deleteVoice
       summary: Delete a voice
       description: |
-        Auth: operator admin JWT or customer_admin. The delete leaves a GDPR
-        tombstone. A voice that is a pack default gives 409.
+        Auth: customer_admin key. After the delete, the voice id returns 410
+        `voice_tombstoned`. A voice that is a pack default gives 409.
       responses:
         '200':
           description: Deleted.
@@ -333,7 +332,7 @@ paths:
       operationId: confirmVoice
       summary: Confirm a draft voice
       description: |
-        Auth: operator admin JWT or customer_admin. Voices created through the
+        Auth: customer_admin key. Voices created through the
         gateway are already ready. Confirm applies only to a legacy draft.
       responses:
         '200':
@@ -356,10 +355,10 @@ paths:
       operationId: listModels
       summary: List model aliases
       description: |
-        Returns the model aliases served now. The list comes from live runtime
-        config, so read it instead of hard-coding values.
+        Returns the model aliases served now. Read the list instead of hard-coding
+        values.
 
-        Auth: consumer, customer_admin, operator admin JWT, or federated tenant JWT.
+        Auth: consumer, customer_admin, or federated tenant JWT.
       responses:
         '200':
           description: Alias list.
@@ -379,15 +378,14 @@ paths:
       summary: Mint a proxy key
       description: |
         The bearer is returned once. Store it at once. Omitted `expires_at` gives
-        90 days. A customer_admin key is limited to 90 days. Operator-minted keys
-        can last up to 180 days. An `expires_at` in the past gives 400.
+        90 days. A customer_admin key is limited to 90 days. An `expires_at` in the
+        past gives 400.
 
         A customer_admin key can mint only consumer keys for its own customer_id.
-        The role `customer_admin` is operator-only.
 
         On a 500 no bearer is issued and no state changes, so a retry is safe.
 
-        Auth: customer_admin key (or the operator secret).
+        Auth: customer_admin key.
       requestBody:
         required: true
         content:
@@ -403,7 +401,7 @@ paths:
                   type: string
                   enum: [consumer, customer_admin]
                   default: consumer
-                  description: The role `customer_admin` is operator-only.
+                  description: A customer_admin key can mint only `consumer`.
       responses:
         '200':
           description: The new key. The `bearer` field shows once.
@@ -439,7 +437,7 @@ paths:
 
         On a 500 no bearer is issued and no state changes, so a retry is safe.
 
-        Auth: customer_admin key (or the operator secret).
+        Auth: customer_admin key.
       requestBody:
         required: true
         content:
@@ -477,7 +475,7 @@ paths:
       description: |
         A customer_admin cannot manage customer_admin keys.
 
-        Auth: customer_admin key (or the operator secret).
+        Auth: customer_admin key.
       responses:
         '200':
           description: The key record.
@@ -495,7 +493,7 @@ paths:
         The revoke takes effect within about 10 seconds. A customer_admin cannot
         revoke a customer_admin kid (404 `proxy_key_not_found`).
 
-        Auth: customer_admin key (or the operator secret).
+        Auth: customer_admin key.
       responses:
         '200':
           description: Revoked.
@@ -520,7 +518,7 @@ paths:
         Metadata only, cursor paged. `total_estimate` is the count before
         pagination. A customer_admin sees only its own consumer keys.
 
-        Auth: customer_admin key (or the operator secret).
+        Auth: customer_admin key.
       parameters:
         - {name: cursor, in: query, schema: {type: string}, description: Cursor from the previous page.}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
@@ -551,8 +549,8 @@ components:
       type: http
       scheme: bearer
       description: |
-        `Authorization: Bearer <token>`. The token is an operator admin JWT, a
-        proxy key (`v1.<kid>.<sig>.<payload>`), or a federated tenant JWT. A
+        `Authorization: Bearer <token>`. The token is a proxy key or a federated
+        tenant JWT. A
         missing header or a non-Bearer scheme returns 401 with a
         `WWW-Authenticate` header for the `Bearer` scheme. A structurally
         malformed token returns 400 `malformed_bearer`.
@@ -629,7 +627,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
     ServiceUnavailable:
-      description: The service or backend is not available now. Retry later.
+      description: The service is not available now. Retry later.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
@@ -651,7 +649,6 @@ components:
   schemas:
     SpeechRequest:
       type: object
-      description: Fields not listed here are not part of the public contract.
       required: [input]
       properties:
         input:
@@ -682,7 +679,6 @@ components:
           description: Only `word` is honored. With `["word"]` the response is JSON.
     SpeechBatchItem:
       type: object
-      description: Fields not listed here are not part of the public contract.
       required: [input]
       properties:
         input: {type: string, description: Text to speak. The alias `text` is also accepted.}
@@ -694,7 +690,6 @@ components:
           items: {type: string, enum: [word]}
     SpeechBatchRequest:
       type: object
-      description: Fields not listed here are not part of the public contract.
       required: [items]
       properties:
         items:
@@ -792,7 +787,7 @@ components:
         kid: {type: string}
         bearer:
           type: string
-          description: The full key `v1.<kid>.<sig>.<payload>`. Shown once.
+          description: The full key. Shown once.
         tier: {type: string}
         customer_id: {type: string}
         expires_at: {type: integer}

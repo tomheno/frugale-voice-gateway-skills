@@ -6,8 +6,6 @@ Drive the frugale text-to-speech API from your own agent or backend. Mint and
 manage keys, add voices, synthesize one text or a batch, pick a model and a
 format. Each runbook gives the exact request for one task.
 
-This tree is PUBLIC. It documents only the customer API surface.
-
 ## The two apps
 
 | App | Base URL | Serves |
@@ -28,7 +26,7 @@ Authorization: Bearer <proxy-key>
 Two key roles:
 
 - `customer_admin`. Your admin key. Mint, rotate, and revoke your own consumer
-  keys. Add and manage voices. The operator issues it to your tenant.
+  keys. Add and manage voices. We issue it to your tenant.
 - `consumer`. A synth-only key. Put this in the backend that calls synth. Mint
   it yourself from your `customer_admin`.
 
@@ -43,14 +41,13 @@ export SYNTH="https://api-otem.confidential-intelligence.lu"
 export KEY="<your proxy key>"
 ```
 
-## Cold start
+## First call after idle
 
-The apps keep one warm replica. A first call after a long idle can still boot a
-backend (up to 8 minutes). Every runbook cURL carries
-`--retry 12 --retry-delay 15 --retry-all-errors` to re-send while the app boots,
-which covers about 3 minutes. For a fully cold backend, raise `--retry` (for
-example `--retry 40`). The `-L --max-redirs 60` flags follow the boot redirect.
-If a first call returns nothing, run it again.
+A first call after a long idle can take several minutes. Every runbook cURL
+carries `--retry 12 --retry-delay 15 --retry-all-errors` to re-send the request
+for about 3 minutes. For a longer wait, raise `--retry` (for example
+`--retry 40`). The `-L --max-redirs 60` flags follow redirects. If a first call
+returns nothing, run it again.
 
 ## Runbooks
 

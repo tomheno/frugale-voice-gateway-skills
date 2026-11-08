@@ -30,7 +30,8 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -X POST "$SYNTH/v1/voices/upload"
 ```
 
-Send `consent_to_backend_mirror=true` so the backend can hold the reference. The
+Send `consent_to_backend_mirror=true` to allow a copy of the reference clip on the
+servers that run synthesis. Without it, synthesis with this voice can fail. The
 optional `identifier` field is echoed back. The reply carries the voice `uid`.
 Use that `uid` as the `voice` field at synth. A voice created through the gateway
 is already `ready`.

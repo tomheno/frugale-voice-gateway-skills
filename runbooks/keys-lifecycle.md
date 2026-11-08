@@ -3,7 +3,7 @@
 # Runbook: key lifecycle
 
 Mint, rotate, revoke, and list your tenant's `consumer` keys. Use your
-`customer_admin` key. The operator gives you the `customer_admin` key once. You
+`customer_admin` key. We give you the `customer_admin` key once. You
 self-serve every consumer key from it.
 
 Set your shell (see `../README.md`): `ADMIN`, `KEY` (your `customer_admin`
@@ -53,7 +53,7 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -X DELETE "$ADMIN/admin/proxy-keys/<kid>"
 ```
 
-To replace a leaked `customer_admin` key, contact the operator.
+To replace a leaked `customer_admin` key, contact us.
 
 ## List your keys
 

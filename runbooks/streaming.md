@@ -13,7 +13,7 @@ Set your shell (see `../README.md`): `SYNTH`, `KEY` (a `consumer` bearer),
 
 | door | route + method | wire |
 |---|---|---|
-| PCM chunks | `POST /tts/stream` | chunked `audio/pcm`, headers `x-sample-rate: 24000` and `x-channels: 1`, 16-bit mono PCM |
+| PCM chunks | `POST /tts/stream` | chunked `audio/pcm`, headers `x-sample-rate` (the rate depends on the model) and `x-channels: 1`, 16-bit mono PCM |
 | WAV frames | `POST /tts/stream/wav` | chunked `application/octet-stream`, each frame = `[4-byte big-endian length][WAV chunk]` |
 | WSS mirror | `GET /v1/audio/speech/stream` (upgrade) | WebSocket, binary audio frames |
 | OpenAI-Realtime | `GET /v1/realtime` (upgrade) | WebSocket, OpenAI-Realtime control frames |
@@ -31,7 +31,8 @@ curl -sS -N -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -X POST "$SYNTH/tts/stream" \
   -d "{\"model\":\"hulotte\",\"input\":\"Bonjour le monde.\",\"voice\":\"$VOICE\"}" \
   -o out.pcm
-# out.pcm = raw 16-bit 24000 Hz mono. Wrap in a WAV header or feed a PCM player.
+# out.pcm = raw 16-bit mono. Add -D headers.txt to read the x-sample-rate response header.
+# Wrap in a WAV header at that rate, or feed a PCM player.
 ```
 
 `-N` disables curl buffering so chunks arrive live.
@@ -40,9 +41,7 @@ curl -sS -N -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 
 `GET /v1/audio/speech/stream` and `GET /v1/realtime` are WebSocket upgrades, not
 cURL calls. Open a WebSocket with the `Authorization: Bearer <consumer>` header,
-then send the synth control frames. The browser ticket is planned and not yet
-available. Today, connect from a server-side client with the
-`Authorization: Bearer` header. Use `/v1/realtime` for an OpenAI-Realtime
+then send the synth control frames. Connect from a server-side client. Use `/v1/realtime` for an OpenAI-Realtime
 client. Use `/v1/audio/speech/stream` for a plain synth mirror that returns
 binary audio frames.
 
@@ -62,7 +61,7 @@ You do not reconnect for each utterance.
 | you receive | meaning |
 |---|---|
 | `{"type":"audio.start",...}` | audio of one sentence starts |
-| binary frames | audio (16-bit mono PCM). The sample rate is the backend rate. Read it from `audio.start.sample_rate` |
+| binary frames | audio (16-bit mono PCM). Read the sample rate from `audio.start.sample_rate` |
 | `{"type":"audio.done",...}` | audio of one sentence ends |
 | `{"type":"session.done"}` | one utterance is complete. The socket stays open |
 | `{"type":"error",...}` | the request failed |
@@ -86,7 +85,7 @@ open a new one and send `session.config` again.
 ## Latency: choose the path and tune the client
 
 Measured on 2026-10-13. Client in Europe, EU gateway, 61 ms median round trip
-to the gateway, backend warm, one stored voice, one French sentence of about 4
+to the gateway, service warm, one stored voice, one French sentence of about 4
 seconds of audio, 10 interleaved rounds per path. These are measurements, not
 guarantees. Your numbers change with your network.
 
@@ -98,7 +97,7 @@ guarantees. Your numbers change with your network.
 | WSS, `session.config` sent in the same burst as the text | first audio after the text frame | 419.7 ms | 444.4 ms |
 | WSS, new session (once per conversation) | the handshake: TCP, TLS and the upgrade, about 3 round trips | 203.2 ms | 206.8 ms |
 
-Our own gateway time for the same request is about 270 ms (EU, backend warm).
+Our own gateway time for the same request is about 270 ms (EU, service warm).
 The rest is your network.
 
 ### Choose the path
@@ -118,8 +117,7 @@ handshake once, then every utterance rides the open socket.
    text exists. The handshake (203 ms in our test) then happens while the user
    still speaks.
 2. Send `session.config` right after the socket opens, before you have text. The
-   gateway does the session-start work (voice lookup and safety checks) when the
-   config arrives. In our test this cost about 100 ms (419.7 ms against 317.9 ms)
+   gateway prepares the session when the config arrives. In our test this cost about 100 ms (419.7 ms against 317.9 ms)
    when the config arrived in the same burst as the text.
 3. Keep the session open for the whole conversation. Send each text as it
    arrives. Do not reconnect per utterance.

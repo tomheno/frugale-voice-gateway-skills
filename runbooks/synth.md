@@ -49,20 +49,20 @@ MIME type. These are the SAME keys a batch result uses, so one parser reads both
 `words` are your exact input words, timed in seconds. Without the field, the
 response is plain audio (unchanged).
 
-The clip MUST be 30 minutes (1800 seconds) or less; longer audio is windowed and
-stitched aligner-side. A clip over the limit returns HTTP 400. Word timestamps are
+The clip MUST be 30 minutes (1800 seconds) or less. A clip over the limit
+returns HTTP 400. Word timestamps are
 not available on the streaming endpoints. In a batch, set
 `timestamp_granularities: ["word"]` at the top level. Each result then carries
 `words` AND `audio_duration`. A failed batch item carries `error`. A succeeded
 item whose alignment fails keeps its audio and `audio_duration`, omits `words`,
-and carries `words_error`. If you request alignment but the aligner is not
-configured, the batch returns HTTP 400 (not silent nulls).
+and carries `words_error`. If word timestamps are not available, the batch
+returns HTTP 400.
 
 ## A batch
 
-Send up to 16 texts in one call. Run the single-synth call ONCE first to warm the
-backend. A cold batch returns HTTP 200 with every item failed. `--retry` does not
-retry a 200, so an un-warmed batch writes an all-failed file.
+Send up to 16 texts in one call. Run the single-synth call ONCE first. After a long
+idle, a batch returns HTTP 200 with every item failed. `--retry` does not retry a
+200, so that batch writes an all-failed file.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \

@@ -9,7 +9,7 @@ description: Decode the frugale opus_raw audio format (OPUSRAW1 container of bar
 
 Decode `opus_raw`. It is the smallest synth format, an `OPUSRAW1` container of bare
 libopus frames. It is not a playable file. Decode it in the app before playback.
-The batch path uses it by default.
+A batch returns `wav` unless you set `response_format`.
 
 Read `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/opus-raw-decode.md` for the container layout + the
 language-agnostic decode steps.

@@ -22,9 +22,7 @@ channels:
     description: |
       Upgrade with HTTP GET and `Authorization: Bearer <token>`. The gateway checks
       the token BEFORE the upgrade. A bad token gives HTTP 401 with no WebSocket
-      close. Today authentication is the `Authorization: Bearer <token>` header on
-      the upgrade. A short-lived browser ticket in `Sec-WebSocket-Protocol` is planned
-      and not yet available.
+      close.
 
       Limits: frame cap 10 MiB. The first frame must arrive within 15 s. Idle limit
       60 s. Session limit 300 s. The server sends a ping every 20 s. Streaming
@@ -39,9 +37,9 @@ channels:
 
       Close codes: 1000 normal. 1001 going away or draining. 1008 client fault
       (bad first frame, no config in 15 s, unknown model alias, a request that
-      sends `ref_audio` or `ref_text`, bad voice). 1011 internal or upstream fault.
-      1013 try again later (admission shed or backend warming). 1006 is an edge
-      drop only.
+      sends inline reference audio or text, bad voice). 1011 internal or upstream
+      fault. 1013 try again later (the service is busy or starting). 1006 means
+      that the connection dropped with no close code.
 
       Unknown voice. On the first `session.config`, the server closes with code 1008
       and the reason `voice refused`. On a later `session.config`, the server sends a
@@ -63,9 +61,7 @@ channels:
     description: |
       Upgrade with HTTP GET and `Authorization: Bearer <token>`. The gateway checks
       the token BEFORE the upgrade. A bad token gives HTTP 401 with no WebSocket
-      close. Today authentication is the `Authorization: Bearer <token>` header on
-      the upgrade. A short-lived browser ticket in `Sec-WebSocket-Protocol` is planned
-      and not yet available.
+      close.
 
       Limits: frame cap 10 MiB. The first frame must arrive within 15 s. Idle limit
       60 s. Session limit 300 s. The server sends a ping every 20 s. Audio is
@@ -84,9 +80,9 @@ channels:
 
       Close codes: 1000 normal. 1001 going away or draining. 1008 client fault
       (non-`session.update` first frame, no config in 15 s, unknown model alias,
-      bad voice). 1011 internal or upstream fault. 1013 try again later (admission
-      shed or backend warming).
-      1006 is an edge drop only.
+      bad voice). 1011 internal or upstream fault. 1013 try again later (the service
+      is busy or starting). 1006 means that the connection dropped with no close
+      code.
 
       Unknown voice. On the first `session.update`, the server closes with code 1008
       and the reason `voice refused`. On a later `session.update`, the server sends a
@@ -281,12 +277,6 @@ components:
           type: integer
           description: Accepted and ignored. Read the real rate from audio.start.sample_rate.
         lang: {type: string, description: ISO 639-1.}
-        ref_audio:
-          type: string
-          description: Not available to proxy-key callers. A request that sends it is closed 1008.
-        ref_text:
-          type: string
-          description: Not available to proxy-key callers. A request that sends it is closed 1008.
     InputTextPayload:
       type: object
       required: [type, text]

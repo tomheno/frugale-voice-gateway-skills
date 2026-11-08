@@ -18,4 +18,4 @@ points to.
 | `frugale-tts-opus-raw` | decode the compact `opus_raw` format | `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/opus-raw-decode.md` |
 | `frugale-tts-streaming` | stream audio as it renders | `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/streaming.md` |
 
-Start at `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md` for the two apps, auth, and cold-start.
+Start at `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md` for the two apps, auth, and the first call after idle.
