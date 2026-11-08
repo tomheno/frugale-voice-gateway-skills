@@ -79,8 +79,8 @@ channels:
 
       Close codes: 1000 normal. 1001 going away or draining. 1008 client fault
       (non-`session.update` first frame, no config in 15 s, unknown model alias,
-      bad voice). 1011 internal or upstream fault, including a backend rate other
-      than 24000 Hz. 1013 try again later (admission shed or backend warming).
+      bad voice). 1011 internal or upstream fault. 1013 try again later (admission
+      shed or backend warming).
       1006 is an edge drop only.
     messages:
       sessionCreated: {$ref: '#/components/messages/SessionCreated'}
@@ -262,7 +262,7 @@ components:
         type: {const: session.config}
         voice:
           type: string
-          description: Voice id of a stored voice (v-...), or default.
+          description: Voice id of a stored voice (v-...). The value default is refused with close 1008.
         model:
           type: string
           description: Model alias. A free string. Read the live list from `GET /v1/models`.
@@ -388,7 +388,7 @@ components:
           properties:
             voice:
               type: string
-              description: Voice id of a stored voice (v-...), or default. Flat shape.
+              description: Voice id of a stored voice (v-...). The value default is refused with close 1008. Flat shape.
             model:
               type: string
               description: Model alias. A free string.
@@ -403,7 +403,7 @@ components:
                   properties:
                     voice:
                       type: string
-                      description: Voice id of a stored voice (v-...), or default.
+                      description: Voice id of a stored voice (v-...). The value default is refused with close 1008.
     ConversationItemCreatePayload:
       type: object
       required: [type, item]
