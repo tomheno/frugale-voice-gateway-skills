@@ -7,11 +7,11 @@ info:
     companion `openapi.yaml`.
 servers:
   primary:
-    host: api-otem.confidential-intelligence.lu
+    host: api-otem.confidential-intelligence.com
     protocol: wss
     description: Primary (EU)
   secondary:
-    host: api-otem.confidential-intelligence.com
+    host: api-otem.confidential-intelligence.lu
     protocol: wss
     description: Secondary (EU)
 defaultContentType: application/json

@@ -12,9 +12,9 @@ Two spec files describe the full public API. Load them before you write a client
 1. Load `openapi.yaml` for any HTTP call.
 2. Load `asyncapi.yaml` for any WebSocket stream.
 3. Send `Authorization: Bearer <token>` on every call.
-4. Use these hosts. Primary: `https://api-otem.confidential-intelligence.lu`
-   and `wss://api-otem.confidential-intelligence.lu`. Secondary: the same host
-   with the `.com` suffix.
+4. Use these hosts. Primary: `https://api-otem.confidential-intelligence.com`
+   and `wss://api-otem.confidential-intelligence.com`. Secondary: the same host
+   with the `.lu` suffix.
 5. Read the live model alias list with `GET /v1/models`. The `model` field is a
    free string. Do not hard-code a value.
 

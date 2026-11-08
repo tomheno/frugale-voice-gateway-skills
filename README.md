@@ -10,10 +10,10 @@ format. Each runbook gives the exact request for one task.
 
 | App | Base URL | Serves |
 |---|---|---|
-| SYNTH | `https://api-otem.confidential-intelligence.lu` | synth, batch, streaming, voices, models |
+| SYNTH | `https://api-otem.confidential-intelligence.com` | synth, batch, streaming, voices, models |
 | ADMIN | `https://admin-otem.confidential-intelligence.com` | the key lifecycle (mint / rotate / revoke / list) |
 
-The SYNTH host also answers at `https://api-otem.confidential-intelligence.com`.
+The SYNTH host also answers at `https://api-otem.confidential-intelligence.lu`.
 
 ## Auth
 
@@ -37,7 +37,7 @@ Set your shell for the runbooks:
 
 ```bash
 export ADMIN="https://admin-otem.confidential-intelligence.com"
-export SYNTH="https://api-otem.confidential-intelligence.lu"
+export SYNTH="https://api-otem.confidential-intelligence.com"
 export KEY="<your proxy key>"
 ```
 

@@ -20,9 +20,9 @@ info:
 
     Streaming over WebSocket is described in the companion `asyncapi.yaml`.
 servers:
-  - url: https://api-otem.confidential-intelligence.lu
-    description: Primary (EU)
   - url: https://api-otem.confidential-intelligence.com
+    description: Primary (EU)
+  - url: https://api-otem.confidential-intelligence.lu
     description: Secondary (EU)
 security:
   - bearerAuth: []
@@ -153,9 +153,7 @@ paths:
           description: Voice list.
           content:
             application/json:
-              schema:
-                type: array
-                items: {$ref: '#/components/schemas/VoiceResponse'}
+              schema: {$ref: '#/components/schemas/VoiceListResponse'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/VoiceForbidden'}
@@ -766,6 +764,18 @@ components:
         created_at: {type: string}
         status: {type: string, enum: [ready, draft]}
         is_favorite: {type: boolean}
+    VoiceListResponse:
+      type: object
+      required: [voices, count, lang_counts]
+      properties:
+        voices:
+          type: array
+          items: {$ref: '#/components/schemas/VoiceResponse'}
+        count: {type: integer}
+        lang_counts:
+          type: object
+          description: Number of voices per language.
+          additionalProperties: {type: integer}
     ProxyKeyRecord:
       type: object
       required: [kid, tier, customer_id, expires_at, issued_at, role]
