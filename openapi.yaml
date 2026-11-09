@@ -657,7 +657,7 @@ components:
         model:
           type: string
           description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
-          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview]
+          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview, hulotte-lb-preview]
         voice:
           type: string
           default: default
@@ -699,7 +699,7 @@ components:
         model:
           type: string
           description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
-          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview]
+          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview, hulotte-lb-preview]
         voice: {type: string}
         response_format: {type: string, enum: [wav, mp3, opus, opus_raw, pcm]}
         language: {type: string, description: ISO 639-1 code. The alias `lang` is also accepted.}

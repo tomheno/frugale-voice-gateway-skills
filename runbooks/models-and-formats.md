@@ -28,6 +28,7 @@ Current aliases:
 | `linotte` | recommended | de, en, fr, it, ja, ko, pt, ru, zh | narration, non real-time, and batch. |
 | `lyre` | experimental | n/a | early adopters only. |
 | `lb-2610-small-preview` | experimental | lb (Luxembourgish) | early adopters only. A lyre variant. |
+| `hulotte-lb-preview` | experimental | lb (Luxembourgish), de, en, es, it, ja, ko, pt, ru, zh. `fr` and a request with no language use automatic language detection from the text. | early adopters only. Luxembourgish first. Clone a voice from a speaker vector. A reference audio clip also works, but it is used as a vector. The first request after a quiet period can take several minutes: retry. |
 
 ## Formats
 
