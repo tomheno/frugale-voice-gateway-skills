@@ -10,7 +10,7 @@ format. Each runbook gives the exact request for one task.
 
 | App | Base URL | Serves |
 |---|---|---|
-| SYNTH | `https://api-otem.confidential-intelligence.com` | synth, batch, streaming, voices, models |
+| SYNTH | `https://api-otem.confidential-intelligence.com` | synth, batch, streaming, voices, models, transcription (preview) |
 | ADMIN | `https://admin-otem.confidential-intelligence.com` | the key lifecycle (mint / rotate / revoke / list) |
 
 The SYNTH host also answers at `https://api-otem.confidential-intelligence.lu`.
@@ -59,6 +59,7 @@ returns nothing, run it again.
 | `runbooks/models-and-formats.md` | the models + the audio formats, and how to pick |
 | `runbooks/opus-raw-decode.md` | decode the compact `opus_raw` format in your app |
 | `runbooks/streaming.md` | stream audio as it renders (advanced), and the latency guide (HTTP stream or WSS, how to tune a client) |
+| `runbooks/transcription.md` | transcribe an audio clip to text, JSON or streamed (preview, consumer) |
 
 ## Limits
 

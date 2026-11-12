@@ -4,7 +4,7 @@ Two spec files describe the full public API. Load them before you write a client
 
 | file | covers |
 |---|---|
-| `public/openapi.yaml` | OpenAPI 3.1. HTTP plane: synth, batch, voices, models, proxy keys |
+| `public/openapi.yaml` | OpenAPI 3.1. HTTP plane: synth, batch, voices, models, proxy keys, transcription preview (`/v0`) |
 | `public/asyncapi.yaml` | AsyncAPI 3.0. WSS plane: `/v1/audio/speech/stream` and `/v1/realtime` |
 
 ## Steps
@@ -30,3 +30,4 @@ Two spec files describe the full public API. Load them before you write a client
 - `runbooks/synth.md`
 - `runbooks/streaming.md`
 - `runbooks/keys-lifecycle.md`
+- `runbooks/transcription.md`

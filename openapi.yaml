@@ -5,7 +5,8 @@ info:
   description: |
     OpenAI-compatible text-to-speech HTTP API. It covers speech synthesis, batch
     synthesis, voice management, the model alias list, and the proxy-key
-    lifecycle.
+    lifecycle. It also has a speech-to-text preview under `/v0` (tag
+    `transcription`).
 
     Every call sends `Authorization: Bearer <token>`. Two credential kinds exist:
     a proxy key (role `consumer` or `customer_admin`) and a federated tenant JWT.
@@ -33,6 +34,12 @@ tags:
     description: Provisioned voice management.
   - name: models
     description: Model alias list.
+  - name: transcription
+    description: |
+      Speech-to-text preview. The `/v0` routes are a preview: a stable
+      `/v1` transcription route replaces them later. The request and the answer
+      use the OpenAI chat-completions shape, with the audio as a base64 `data:`
+      URL inside the message.
   - name: proxy-keys
     description: |
       Proxy-key lifecycle. These routes are served on the admin
@@ -366,6 +373,119 @@ paths:
                 type: object
                 additionalProperties: true
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v0/chat/completions:
+    post:
+      tags: [transcription]
+      operationId: transcribeChat
+      summary: Transcribe one audio clip (preview)
+      description: |
+        Transcribes one audio clip. Send the audio as a base64 WAV `data:` URL
+        in an `audio_url` part, and the instruction as a `text` part of the same
+        user message. The answer text is in `choices[0].message.content`.
+
+        Language. Set the spoken language with the `X-Language` header or the
+        `language` query parameter (the header wins). `lb` or `ltz` uses the
+        Luxembourgish route. With no language, the call uses the Luxembourgish route.
+        Any other value (for example `fr`, `de`, `en`) uses the multilingual
+        route. A regional tag such as `fr-FR` counts as its first part.
+
+        Streaming. Set `stream` to `true` to get the text as server-sent events
+        (`text/event-stream`). Each event is `data: <chunk JSON>`. The last
+        event is `data: [DONE]`. If the service fails during the stream, the last
+        event is `data: {"detail":"upstream_error"}`, with no `[DONE]`. You send
+        the audio in full first. The transcription runbook has a stream example
+        with client code.
+
+        Output length. Set `max_tokens` to 10 per second of audio plus 32, at
+        most 2048. A clip longer than about 200 seconds needs more: split it.
+
+        Body rules. The body is JSON in UTF-8 (`Content-Type:
+        application/json`, no other charset, no `Content-Encoding`). It must
+        hold an audio part and `max_tokens`. `max_tokens` is at most 2048. Send only the fields of
+        the request schema. A body that breaks a rule returns 400 `invalid_request`.
+
+        Rate limit. At most 120 calls a minute per key. Above it: 429
+        `rate_limited` with `Retry-After`.
+
+        Auth: consumer key.
+      parameters:
+        - name: language
+          in: query
+          required: false
+          schema: {type: string, example: fr}
+          description: Spoken language (ISO 639-1). The `X-Language` header wins over this parameter.
+        - name: X-Language
+          in: header
+          required: false
+          schema: {type: string, example: lb}
+          description: Spoken language (ISO 639-1).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TranscriptionRequest'}
+            example:
+              messages:
+                - role: user
+                  content:
+                    - {type: text, text: 'Audio transcription. Output: transcript only.'}
+                    - type: audio_url
+                      audio_url: {url: 'data:audio/wav;base64,UklGRi...'}
+              max_tokens: 83
+              temperature: 0
+      responses:
+        '200':
+          description: The transcript. JSON, or server-sent events when `stream` is `true`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TranscriptionResponse'}
+            text/event-stream:
+              schema:
+                description: 'Each event is `data: ` plus one TranscriptionChunk as JSON. The last event is `data: [DONE]`.'
+                allOf:
+                  - {$ref: '#/components/schemas/TranscriptionChunk'}
+        '400':
+          description: '`invalid_request`: the body breaks a body rule. `bad_request`: the request is not valid for the service.'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: invalid_request}
+        '401':
+          description: Missing, bad, expired, or revoked key, or a key that is not a consumer key.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: unauthorized}
+        '413':
+          description: The body is too large.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: body_too_large}
+        '429':
+          description: Rate limit reached. Wait the `Retry-After` seconds.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: rate_limited}
+        '502':
+          description: The service gave no valid answer. Retry.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: upstream_error}
+        '503':
+          description: '`asr_unavailable`: the service is busy or starting, retry after `Retry-After` when present. `auth_unavailable`: the key check is not available now, retry.'
+          headers:
+            Retry-After:
+              schema: {type: integer}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorDetail'}
+              example: {detail: asr_unavailable}
   /admin/proxy-keys/mint:
     servers: &adminServers
       - url: https://admin-otem.confidential-intelligence.com
@@ -811,6 +931,107 @@ components:
           type: string
           description: The successor key. Shown once.
         expires_at: {type: integer}
+    TranscriptionRequest:
+      type: object
+      required: [messages, max_tokens]
+      additionalProperties: false
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/TranscriptionMessage'}
+        max_tokens:
+          type: integer
+          minimum: 1
+          maximum: 2048
+          description: Output token cap. Use 10 per second of audio plus 32.
+        temperature: {type: number, minimum: 0, maximum: 2, description: 0 gives the most stable transcript.}
+        stream: {type: boolean, default: false, description: true sends the text as server-sent events.}
+        stream_options:
+          type: object
+          additionalProperties: false
+          properties:
+            include_usage: {type: boolean, description: true adds one last event with the token counts.}
+    TranscriptionMessage:
+      type: object
+      required: [role, content]
+      additionalProperties: false
+      properties:
+        role: {type: string, enum: [user]}
+        content:
+          type: array
+          minItems: 1
+          items:
+            oneOf:
+              - type: object
+                required: [type, text]
+                additionalProperties: false
+                properties:
+                  type: {type: string, enum: [text]}
+                  text: {type: string, description: 'The instruction, for example the language and the output form.'}
+              - type: object
+                required: [type, audio_url]
+                additionalProperties: false
+                properties:
+                  type: {type: string, enum: [audio_url]}
+                  audio_url:
+                    type: object
+                    required: [url]
+                    additionalProperties: false
+                    properties:
+                      url:
+                        type: string
+                        pattern: '^data:audio/wav;base64,'
+                        description: The audio as a base64 WAV `data:` URL. Mono 16000 Hz PCM is a good input.
+    TranscriptionUsage:
+      type: object
+      properties:
+        prompt_tokens: {type: integer}
+        completion_tokens: {type: integer}
+        total_tokens: {type: integer}
+    TranscriptionResponse:
+      type: object
+      required: [id, object, model, choices]
+      properties:
+        id: {type: string, example: chatcmpl-6f1c0b8e2d4a4b0f9c3e5a7d1b2c3d4e}
+        object: {type: string, enum: [chat.completion]}
+        created: {type: integer, description: Unix seconds.}
+        model: {type: string, example: omni-asr, description: The public id of the speech-to-text service.}
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: {type: integer}
+              message:
+                type: object
+                properties:
+                  role: {type: string, enum: [assistant]}
+                  content: {type: string, description: The transcript.}
+              finish_reason: {type: [string, 'null'], enum: [stop, length, null], description: '`length`: the output hit `max_tokens`.'}
+        usage: {$ref: '#/components/schemas/TranscriptionUsage'}
+    TranscriptionChunk:
+      type: object
+      description: One server-sent event of a streamed transcript.
+      required: [id, object, model, choices]
+      properties:
+        id: {type: string, description: The same id on every event of one answer.}
+        object: {type: string, enum: [chat.completion.chunk]}
+        created: {type: integer}
+        model: {type: string, example: omni-asr}
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: {type: integer}
+              delta:
+                type: object
+                properties:
+                  role: {type: string, enum: [assistant]}
+                  content: {type: string, description: The next part of the transcript.}
+              finish_reason: {type: [string, 'null'], enum: [stop, length, null]}
+        usage: {$ref: '#/components/schemas/TranscriptionUsage'}
     ErrorDetail:
       type: object
       required: [detail]
