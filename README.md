@@ -41,14 +41,6 @@ export SYNTH="https://api-otem.confidential-intelligence.com"
 export KEY="<your proxy key>"
 ```
 
-## First call after idle
-
-A first call after a long idle can take several minutes. Every runbook cURL
-carries `--retry 12 --retry-delay 15 --retry-all-errors` to re-send the request
-for about 3 minutes. For a longer wait, raise `--retry` (for example
-`--retry 40`). The `-L --max-redirs 60` flags follow redirects. If a first call
-returns nothing, run it again.
-
 ## Runbooks
 
 | runbook | task |

@@ -169,6 +169,20 @@ read: for await (const chunk of res.body) {
 
 An event can arrive in more than one network chunk. Keep the text after the last blank line in the buffer, as above.
 
+## Custom vocabulary
+
+Add `hotwords` to the URL to give the service the names and terms that it must write correctly, for example a brand: `?hotwords=Acme,Kirchberg`.
+Separate the terms with commas, or repeat the parameter. Each term has 1 to 50 characters: letters, digits, space, `'`, `.`, `&`,
+`+`, `-`. Encode `+` as `%2B` and `&` as `%26`. Send at most 50 terms. A term outside these rules returns 400 `invalid_request`.
+
+```bash
+curl -sS "$SYNTH/v0/chat/completions?hotwords=Acme,Kirchberg" \
+  -H @auth.hdr -H "Content-Type: application/json" \
+  -H "X-Language: fr" --data-binary @req.json
+```
+
+The `hotwords` parameter works with `"stream": true` too.
+
 ## Limits
 
 - At most 120 calls a minute per key. Above it: 429 `rate_limited`. Wait the
@@ -185,7 +199,7 @@ Every error is `{"detail": "<code>"}`.
 
 | status | code | next step |
 |---|---|---|
-| 400 | `invalid_request` | The body breaks a rule: no audio part, no `max_tokens`, `max_tokens` above 2048, a field outside the request schema (for example `model` or `n`), or not UTF-8 JSON. Fix the body. |
+| 400 | `invalid_request` | The body breaks a rule: no audio part, no `max_tokens`, `max_tokens` above 2048, a field outside the request schema (for example `model` or `n`), or not UTF-8 JSON. A `hotwords` term outside the rules. Fix the request. |
 | 400 | `bad_request` | The service refused the request. Check the message shape. |
 | 401 | `unauthorized` | Use a valid, unexpired `consumer` key. |
 | 413 | `body_too_large` | Send a shorter clip. |

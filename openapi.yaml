@@ -419,6 +419,11 @@ paths:
           required: false
           schema: {type: string, example: lb}
           description: Spoken language (ISO 639-1).
+        - name: hotwords
+          in: query
+          required: false
+          schema: {type: string, example: 'Acme,Kirchberg'}
+          description: 'Custom vocabulary: names and terms to spell right, comma-separated. The parameter can repeat. Each term has 1 to 50 characters (letters, digits, space, and the characters '' . & + -). Encode + as %2B and & as %26. At most 50 terms. Else 400 `invalid_request`.'
       requestBody:
         required: true
         content:

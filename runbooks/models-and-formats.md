@@ -28,7 +28,19 @@ Current aliases:
 | `linotte` | recommended | de, en, fr, it, ja, ko, pt, ru, zh | narration, non real-time, and batch. |
 | `lyre` | experimental | n/a | early adopters only. |
 | `lb-2610-small-preview` | experimental | lb (Luxembourgish) | early adopters only. A lyre variant. |
-| `hulotte-lb-preview` | experimental | lb (Luxembourgish), de, en, es, it, ja, ko, pt, ru, zh. `fr` and a request with no language use automatic language detection from the text. | early adopters only. Luxembourgish first. Clone a voice from a speaker vector. A reference audio clip also works, but it is used as a vector. The first request after a quiet period can take several minutes: retry. |
+| `hulotte-lb-preview` | experimental | lb (Luxembourgish), de, en, es, it, ja, ko, pt, ru, zh. `fr` and a request with no language use automatic language detection from the text. | early adopters only. Luxembourgish first. |
+
+### Luxembourgish
+
+Use `hulotte-lb-preview` for Luxembourgish speech, and set `"lang": "lb"`. Enroll the voice with `lang` set to `lb` (see the voices
+guide). `hulotte` does not speak Luxembourgish: a request with `lang` `lb` on `hulotte` returns HTTP 400.
+
+```bash
+curl -sS -L --max-redirs 60 -H @auth.hdr -H "Content-Type: application/json" \
+  -X POST "$SYNTH/v1/audio/speech" \
+  -d "{\"model\":\"hulotte-lb-preview\",\"input\":\"Moien, wéi geet et?\",\"voice\":\"$VOICE\",\"lang\":\"lb\",\"response_format\":\"wav\"}" \
+  -o lb.wav
+```
 
 ## Formats
 
