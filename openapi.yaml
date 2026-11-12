@@ -551,7 +551,8 @@ components:
         tenant JWT. A
         missing header or a non-Bearer scheme returns 401 with a
         `WWW-Authenticate` header for the `Bearer` scheme. A structurally
-        malformed token returns 400 `malformed_bearer`.
+        malformed token returns 400 `malformed_bearer`. On the voice routes, a
+        malformed proxy key returns 403 `proxy_key_not_authorized_for_voice_crud`.
   parameters:
     VoiceUid:
       name: uid
@@ -580,7 +581,7 @@ components:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
           example: {detail: unauthorized}
     VoiceForbidden:
-      description: A consumer key or any non customer_admin bearer is not allowed for voice CRUD.
+      description: 'The key is not allowed for voice routes: a valid key whose role is not customer_admin, for example a consumer key, or a malformed proxy key. Use your customer_admin key.'
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
