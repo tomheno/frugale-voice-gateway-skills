@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: Frugale Voice Gateway Streaming API
-  version: 0.10.19
+  version: 0.11.1
   description: |
     Two WebSocket doors for streaming speech synthesis. The HTTP API is in the
     companion `openapi.yaml`.
@@ -24,31 +24,112 @@ channels:
       the token BEFORE the upgrade. A bad token gives HTTP 401 with no WebSocket
       close.
 
-      Limits: frame cap 10 MiB. The first frame must arrive within 15 s. Idle limit
-      60 s. Session limit 300 s. The server sends a ping every 20 s. Streaming
-      audio is `pcm` only. Read the sample rate from `audio.start.sample_rate`.
+      Limits: frame cap 10 MiB. Config deadline 15 s (see Flow). Idle limit 60 s.
+      Session limit 600 s. The server sends a ping every 20 s.
 
-      Flow: send `session.config` first. Send it within 15 s. A frame that arrives
-      before it is buffered. Then send `input.text` frames. Complete sentences are
+      Audio. Set the format with the `session.config` key `format`. The value is
+      `pcm` (the default) or `mulaw`. Read the format and the sample rate from
+      `audio.start`. With `pcm`, the audio is raw 16-bit little-endian PCM, mono,
+      with no header. With `mulaw`, the audio is raw G.711 mu-law, 8000 Hz, mono,
+      1 byte per sample, with no header.
+
+      Flow: send `session.config` first. It must arrive within 15 s after the
+      server accepts the session. The timer does not restart when other frames
+      arrive. A frame that arrives before the config is buffered. At most 256
+      frames, or 65536 characters of `input.text`, can wait before the config.
+      Above that, the server closes the connection with code 1008. Then send
+      `input.text` frames. Complete sentences are
       synthesized as soon as the text arrives. `input.done` flushes buffered text
-      with no sentence end. The server answers with `audio.start`, binary PCM
+      with no sentence end. The server answers with `audio.start`, binary audio
       chunks, `audio.done`, then `session.done`. `session.done` ends one utterance,
       not the connection. Send `session.close` to end the connection.
 
-      Close codes: 1000 normal. 1001 going away or draining. 1008 client fault
-      (bad first frame, no config in 15 s, unknown model alias, a request that
-      sends inline reference audio or text, bad voice). 1011 internal or upstream
-      fault. 1013 try again later (the service is busy or starting). 1006 means
-      that the connection dropped with no close code.
+      Format. Write the value in lower case. With `mulaw`, `audio.start` has
+      `format` `mulaw` and `sample_rate` 8000. The `total_bytes` field of
+      `audio.done` counts the bytes that you get. An unknown value in the first
+      `session.config` closes the connection with code 1008. An unknown value in a
+      later `session.config` gives a non-fatal `error` frame with `error_type`
+      `client_frame_error`, and the session keeps its format.
+
+      If one sentence cannot go out whole as `mulaw`, its `audio.done` has
+      `error: true`. A non-fatal `error` frame with `error_type`
+      `format_unavailable` usually comes first. That sentence can have no
+      `audio.start`, or only some of its audio. The connection stays open.
+
+      Later `session.config`. You can send a `session.config` at any time on the
+      open connection. It can change the language, the voice, and the format. A
+      later `session.config` replaces the whole config. Send `voice` in every
+      config. Send `lang` and `format` again if you want to keep them: a config
+      with no `format` goes back to `pcm`.
+
+      A language or voice change applies to the next commit. A commit is the moment
+      that the server takes the buffered text to speak. Text that you sent and the
+      server did not start to speak is spoken in the new language. A sentence in
+      progress does not change. A `format` change applies at the next `audio.start`,
+      never inside a sentence. So a `format` change in the middle of a response
+      takes effect at a later sentence of that response. Each sentence is
+      self-consistent: its `audio.start` names its format.
+
+      A language that the model does not support closes the connection with code
+      1008. An unknown voice gives a non-fatal `error` frame, and the session keeps
+      its voice. The model is fixed for the life of the connection. A different
+      `model` in a later `session.config` has no effect. To use another model, open
+      a new connection.
+
+      Cancel. Send `response.cancel` at any time, for example when the caller
+      speaks over the voice. The server stops the response in flight at once, so
+      no more audio of it comes. It drops text that you sent and that the server
+      did not start to speak. It keeps the connection open. It answers with a
+      `session.done` that has `cancelled`. The value is `true` when the cancel
+      stopped a response or dropped text. The value is `false` when nothing was in
+      flight and no text waited. Nothing changes then. Audio frames that you
+      already got stay valid. Drop the audio that your player holds for that
+      response. A `session.config` that you sent before the cancel still applies
+      after it.
+
+      The answer to `response.cancel` has `utterance_index` 0 and `total_sentences`
+      0. It is NOT a real turn. Do not count turns with it.
+
+      A cancel does not drop the audio of a turn that already finished. A cancel
+      that arrives after the response ended changes nothing. One exception: when a
+      client reads slowly, the server can still hold audio of an earlier finished
+      turn that it did not send yet. A cancel of a later response can drop that
+      audio. A cancel that arrives while the server shuts down for a restart gets
+      no `session.done`: the connection closes 1001.
+
+      Cancel limits. At most 10 cancels in any 10 s per session (a sliding window).
+      Above it, the server refuses the cancel with a non-fatal `error` frame with
+      `error_type` `cancel_rate_limited`, and nothing is cut. A cancel can arrive
+      while the server still has frames that you sent before it. The server drops
+      the `input.text` and `input.done` frames. It keeps `session.close`. It holds
+      each `session.config` frame, and each frame that does not parse, until the
+      cancel is done. It holds at most 16 frames and 1 MiB in all. A held frame
+      counts the length of its text plus 256 bytes. The first held frame is always
+      held, whatever its size. Above the limit the connection closes 1008. Wait for
+      the `session.done` of the cancel before you send more frames.
+
+      Changes in 0.11.1. The `format` key and `response.cancel` are new. Before,
+      the server ignored any `format` value. Now an unknown value is refused, so
+      check your configs. Before, `response.cancel` gave a non-fatal `error` frame,
+      or closed the connection with code 1008 when it came before the first
+      `session.config`.
+
+      Close codes: 1000 normal. 1001 going away (the server restarts). 1008 client
+      fault (bad first frame, no config in 15 s, unknown model alias, a request
+      that sends inline reference audio or text, bad voice). 1011 internal fault.
+      1013 the service cannot take the session now, so try again in a few seconds.
+      1006 means that the connection dropped with no close code.
 
       Unknown voice. On the first `session.config`, the server closes with code 1008
       and the reason `voice refused`. On a later `session.config`, the server sends a
       non-fatal `error` frame with `error_type` `voice_not_found`, and the session
-      keeps its current voice.
+      keeps its current voice. A deleted voice gives the same frame with
+      `error_type` `voice_tombstoned`.
     messages:
       sessionConfig: {$ref: '#/components/messages/SessionConfig'}
       inputText: {$ref: '#/components/messages/InputText'}
       inputDone: {$ref: '#/components/messages/InputDone'}
+      responseCancel: {$ref: '#/components/messages/StreamResponseCancel'}
       sessionClose: {$ref: '#/components/messages/SessionClose'}
       audioStart: {$ref: '#/components/messages/AudioStart'}
       audioChunk: {$ref: '#/components/messages/AudioChunk'}
@@ -63,9 +144,10 @@ channels:
       the token BEFORE the upgrade. A bad token gives HTTP 401 with no WebSocket
       close.
 
-      Limits: frame cap 10 MiB. The first frame must arrive within 15 s. Idle limit
-      60 s. Session limit 300 s. The server sends a ping every 20 s. Audio is
-      PCM16 at 24000 Hz, always, base64 inside JSON.
+      Limits: frame cap 10 MiB. The `session.update` must arrive within 15 s after
+      the server accepts the session. The timer does not restart when other frames
+      arrive. Idle limit 60 s. Session limit 600 s. The server sends a ping every
+      20 s. Audio is PCM16 at 24000 Hz, always, base64 inside JSON.
 
       Flow: the server sends `session.created` first. The first client frame must
       be `session.update`, within 15 s. Any other first frame closes the connection
@@ -78,16 +160,17 @@ channels:
       `conversation.item.create`, then `response.create`. `response.create` is the
       only commit trigger. `response.cancel` drops in-flight audio.
 
-      Close codes: 1000 normal. 1001 going away or draining. 1008 client fault
-      (non-`session.update` first frame, no config in 15 s, unknown model alias,
-      bad voice). 1011 internal or upstream fault. 1013 try again later (the service
-      is busy or starting). 1006 means that the connection dropped with no close
-      code.
+      Close codes: 1000 normal. 1001 going away (the server restarts). 1008 client
+      fault (non-`session.update` first frame, no config in 15 s, unknown model
+      alias, bad voice). 1011 internal fault. 1013 the service cannot take the
+      session now, so try again in a few seconds. 1006 means that the connection
+      dropped with no close code.
 
       Unknown voice. On the first `session.update`, the server closes with code 1008
       and the reason `voice refused`. On a later `session.update`, the server sends a
       top-level `error` event with `error.type` `invalid_request_error` and
-      `error.code` `voice_not_found`. The session keeps its current voice.
+      `error.code` `voice_not_found`. A deleted voice gives `error.code`
+      `voice_tombstoned`. The session keeps its current voice.
     messages:
       sessionCreated: {$ref: '#/components/messages/SessionCreated'}
       sessionUpdate: {$ref: '#/components/messages/SessionUpdate'}
@@ -111,6 +194,7 @@ operations:
       - $ref: '#/channels/speechStream/messages/sessionConfig'
       - $ref: '#/channels/speechStream/messages/inputText'
       - $ref: '#/channels/speechStream/messages/inputDone'
+      - $ref: '#/channels/speechStream/messages/responseCancel'
       - $ref: '#/channels/speechStream/messages/sessionClose'
   speechStreamReceive:
     action: receive
@@ -149,7 +233,7 @@ components:
   messages:
     SessionConfig:
       name: session.config
-      summary: First frame. Sets voice and options.
+      summary: First frame. Sets voice and options. A later one changes the language, the voice, and the format.
       contentType: application/json
       payload: {$ref: '#/components/schemas/SessionConfigPayload'}
     InputText:
@@ -162,6 +246,11 @@ components:
       summary: Flushes buffered text that has no sentence end.
       contentType: application/json
       payload: {$ref: '#/components/schemas/TypeOnlyInputDone'}
+    StreamResponseCancel:
+      name: response.cancel
+      summary: Stops the response in flight and drops text that did not start. Keeps the connection open.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/TypeOnlyResponseCancel'}
     SessionClose:
       name: session.close
       summary: Ends the connection.
@@ -174,12 +263,12 @@ components:
       payload: {$ref: '#/components/schemas/AudioStartPayload'}
     AudioChunk:
       name: audio chunk
-      summary: Binary frame. Raw PCM, no header.
+      summary: Binary frame. Raw audio, no header.
       contentType: application/octet-stream
       payload:
         type: string
         format: binary
-        description: Raw 16-bit little-endian PCM. Read the rate from `audio.start.sample_rate`.
+        description: 'With `format` `pcm`, raw 16-bit little-endian PCM at `audio.start.sample_rate`. With `format` `mulaw`, raw G.711 mu-law at 8000 Hz, 1 byte per sample, mono.'
     AudioDone:
       name: audio.done
       summary: End of one sentence of audio.
@@ -263,20 +352,25 @@ components:
   schemas:
     SessionConfigPayload:
       type: object
-      required: [type]
+      required: [type, voice]
       properties:
         type: {const: session.config}
         voice:
           type: string
-          description: Voice id of a stored voice (v-...). The value default is refused with close 1008.
+          description: 'Voice id of a stored voice (v-...). Send it in every `session.config`. The value default is refused with close 1008 in the first `session.config`. Name a stored voice.'
         model:
           type: string
-          description: Model alias. A free string. Read the live list from `GET /v1/models`.
+          description: Model alias. A free string. Read the live list from `GET /v1/models`. The model is fixed for the life of the connection. A different value in a later `session.config` has no effect.
           example: my-model-alias
         sample_rate:
           type: integer
           description: Accepted and ignored. Read the real rate from audio.start.sample_rate.
-        lang: {type: string, description: ISO 639-1.}
+        lang: {type: string, description: 'ISO 639-1. A later value changes the language from the next commit. A language that the model does not support closes the connection with code 1008.'}
+        format:
+          type: string
+          enum: [pcm, mulaw]
+          default: pcm
+          description: 'The output audio. Use lower case. `pcm` is 16-bit PCM at the rate in `audio.start`. `mulaw` is G.711 mu-law at 8000 Hz. Any other value is refused: the connection closes with code 1008 for the first `session.config`, and a later `session.config` gives a non-fatal `error` frame. A later change applies at the next `audio.start`. A later `session.config` with no `format` goes back to `pcm`.'
     InputTextPayload:
       type: object
       required: [type, text]
@@ -288,6 +382,11 @@ components:
       required: [type]
       properties:
         type: {const: input.done}
+    TypeOnlyResponseCancel:
+      type: object
+      required: [type]
+      properties:
+        type: {const: response.cancel}
     TypeOnlySessionClose:
       type: object
       required: [type]
@@ -300,6 +399,9 @@ components:
         type: {const: session.done}
         utterance_index: {type: integer}
         total_sentences: {type: integer}
+        cancelled:
+          type: boolean
+          description: 'Present only on the answer to `response.cancel`. True when the cancel stopped a response or dropped text. False when nothing was in flight and no text waited. The answer has `utterance_index` 0 and `total_sentences` 0 and is NOT a real turn. Do not count turns with it.'
     AudioStartPayload:
       type: object
       required: [type]
@@ -308,8 +410,8 @@ components:
         utterance_index: {type: integer}
         sentence_index: {type: integer}
         sentence_text: {type: string}
-        format: {type: string, example: pcm}
-        sample_rate: {type: integer, description: Real PCM rate of the audio that follows.}
+        format: {type: string, enum: [pcm, mulaw], example: pcm}
+        sample_rate: {type: integer, description: Real rate of the audio that follows. 8000 with `mulaw`.}
     AudioDonePayload:
       type: object
       required: [type]
@@ -317,7 +419,7 @@ components:
         type: {const: audio.done}
         utterance_index: {type: integer}
         sentence_index: {type: integer}
-        total_bytes: {type: integer}
+        total_bytes: {type: integer, description: 'The bytes that you got for this sentence. With `mulaw` it counts the mu-law bytes.'}
         error: {type: [boolean, string, 'null']}
     StreamErrorPayload:
       type: object
@@ -327,12 +429,11 @@ components:
         message: {type: string}
         error_type:
           type: string
-          description: A stable token. `voice_not_found` means a later `session.config` named a voice id that does not exist. The frame is non-fatal.
-          examples: [voice_not_found]
+          description: 'A stable token. `voice_not_found` means a later `session.config` named a voice id that does not exist. `voice_tombstoned` means that the voice was deleted. `client_frame_error` means a frame did not parse, for example a later `session.config` with an unknown `format`. `format_unavailable` means that one sentence cannot go out as `mulaw`, and its `audio.done` has `error: true`. `cancel_rate_limited` answers a cancel past 10 in 10 s, and nothing is cut. New values can appear. The frame is non-fatal.'
+          examples: [voice_not_found, voice_tombstoned, client_frame_error, format_unavailable, cancel_rate_limited]
     RealtimeEvent:
       type: object
       required: [type]
-      additionalProperties: true
       properties:
         type: {type: string}
         event_id: {type: string}
@@ -391,7 +492,7 @@ components:
           properties:
             voice:
               type: string
-              description: Voice id of a stored voice (v-...). The value default is refused with close 1008. Flat shape.
+              description: 'Voice id of a stored voice (v-...). The value default is refused with close 1008 in the first `session.update`. Flat shape.'
             model:
               type: string
               description: Model alias. A free string.
@@ -406,7 +507,7 @@ components:
                   properties:
                     voice:
                       type: string
-                      description: Voice id of a stored voice (v-...). The value default is refused with close 1008.
+                      description: 'Voice id of a stored voice (v-...). The value default is refused with close 1008 in the first `session.update`.'
     ConversationItemCreatePayload:
       type: object
       required: [type, item]
@@ -485,7 +586,7 @@ components:
             type: {type: string}
             code:
               type: [string, 'null']
-              description: A stable token. `voice_not_found` means a later `session.update` named a voice id that does not exist.
-              examples: [voice_not_found]
+              description: 'A stable token. `voice_not_found` means a later `session.update` named a voice id that does not exist. `voice_tombstoned` means that the voice was deleted. New values can appear.'
+              examples: [voice_not_found, voice_tombstoned]
             message: {type: string}
             param: {type: [string, 'null']}

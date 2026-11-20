@@ -16,6 +16,6 @@ points to.
 | `frugale-tts-synth` | synthesize one text or a batch | `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/synth.md` |
 | `frugale-tts-formats` | pick a model + an audio format | `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/models-and-formats.md` |
 | `frugale-tts-opus-raw` | decode the compact `opus_raw` format | `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/opus-raw-decode.md` |
-| `frugale-tts-streaming` | stream audio as it renders | `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/streaming.md` |
+| `frugale-tts-streaming` | stream audio as it renders (PCM or mu-law, cancel, language switch) | `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/streaming.md` |
 
 Start at `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md` for the two apps and auth.

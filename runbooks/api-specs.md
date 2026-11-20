@@ -23,7 +23,7 @@ Two spec files describe the full public API. Load them before you write a client
 - A voice reference clip must be 12 seconds or less. A longer clip gives HTTP 400.
 - A batch carries 1 to 16 items.
 - The `input` text is 1 to 4096 characters.
-- Streaming audio is `pcm`. On `/tts/stream` and `/v1/audio/speech/stream` the rate depends on the model: read `x-sample-rate` or `audio.start.sample_rate`. `/v1/realtime` is always 24000 Hz.
+- Streaming audio. `/tts/stream` and `/v1/realtime` send `pcm`. `/v1/audio/speech/stream` sends `pcm` (the default) or `mulaw` (G.711, 8000 Hz): set `format` in `session.config`. The PCM rate depends on the model on `/tts/stream` and `/v1/audio/speech/stream`: read `x-sample-rate` or `audio.start.sample_rate`. `/v1/realtime` is always 24000 Hz.
 
 ## See also
 

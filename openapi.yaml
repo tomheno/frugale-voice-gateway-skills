@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frugale Voice Gateway API
-  version: 0.10.18
+  version: 0.11.1
   description: |
     OpenAI-compatible text-to-speech HTTP API. It covers speech synthesis, batch
     synthesis, voice management, the model alias list, and the proxy-key
@@ -305,7 +305,8 @@ paths:
       summary: Delete a voice
       description: |
         Auth: customer_admin key. After the delete, the voice id returns 410
-        `voice_tombstoned`. A voice that is a pack default gives 409.
+        `voice_tombstoned`. A voice that the service itself uses gives 409 and is
+        not deleted. Contact us.
       responses:
         '200':
           description: Deleted.
@@ -322,7 +323,7 @@ paths:
         '403': {$ref: '#/components/responses/VoiceForbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: The voice is a pack default.
+          description: The service itself uses this voice, so it cannot be deleted. Contact us.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorDetail'}
@@ -404,8 +405,10 @@ paths:
         hold an audio part and `max_tokens`. `max_tokens` is at most 2048. Send only the fields of
         the request schema. A body that breaks a rule returns 400 `invalid_request`.
 
-        Rate limit. At most 120 calls a minute per key. Above it: 429
-        `rate_limited` with `Retry-After`.
+        Rate limit. At most 600 calls a minute per key. The count is per
+        location of the caller, so a key that calls from more than one location
+        can get more than 600 calls through in total. Plan for 600. Above the
+        limit: 429 `rate_limited` with `Retry-After`.
 
         Auth: consumer key.
       parameters:
@@ -483,7 +486,7 @@ paths:
               schema: {$ref: '#/components/schemas/ErrorDetail'}
               example: {detail: upstream_error}
         '503':
-          description: '`asr_unavailable`: the service is busy or starting, retry after `Retry-After` when present. `auth_unavailable`: the key check is not available now, retry.'
+          description: '`asr_unavailable`: the service is not ready, retry after `Retry-After` when present. `auth_unavailable`: the key check is not available now, retry.'
           headers:
             Retry-After:
               schema: {type: integer}
@@ -614,7 +617,8 @@ paths:
       summary: Revoke a proxy key now
       description: |
         The revoke takes effect within about 10 seconds. A customer_admin cannot
-        revoke a customer_admin kid (404 `proxy_key_not_found`).
+        revoke a customer_admin kid (404 `not_found`, the same answer as an
+        absent or foreign kid).
 
         Auth: customer_admin key.
       responses:
@@ -708,15 +712,15 @@ components:
     VoiceForbidden:
       description: 'The key is not allowed for voice routes: a valid key whose role is not customer_admin, for example a consumer key, or a malformed proxy key. Use your customer_admin key.'
       content:
-        application/json:
-          schema: {$ref: '#/components/schemas/ErrorDetail'}
-          example: {detail: proxy_key_not_authorized_for_voice_crud}
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example: {type: 'urn:frugale:problem:not_permitted', title: Forbidden, status: 403, detail: not_permitted}
     AdminForbidden:
-      description: A customer_admin key cannot mint a customer_admin key.
+      description: 'You are not allowed to mint this key. A customer_admin key can mint only a consumer key, and only in your own tenant.'
       content:
-        application/json:
-          schema: {$ref: '#/components/schemas/ErrorDetail'}
-          example: {detail: admin_cannot_mint_admin}
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example: {type: 'urn:frugale:problem:not_permitted', title: Forbidden, status: 403, detail: not_permitted}
     NotFound:
       description: Not found.
       content:
@@ -746,7 +750,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
     BadGateway:
-      description: An upstream service returned an error.
+      description: The service returned an error.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
@@ -756,7 +760,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
     GatewayTimeout:
-      description: An upstream service timed out.
+      description: The service did not answer in time.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
@@ -783,7 +787,7 @@ components:
         model:
           type: string
           description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
-          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview, hulotte-lb-preview]
+          examples: [hulotte, chevechette, linotte, lyre, hulotte-lb-preview]
         voice:
           type: string
           default: default
@@ -825,7 +829,7 @@ components:
         model:
           type: string
           description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
-          examples: [hulotte, chevechette, linotte, lyre, lb-2610-small-preview, hulotte-lb-preview]
+          examples: [hulotte, chevechette, linotte, lyre, hulotte-lb-preview]
         voice: {type: string}
         response_format: {type: string, enum: [wav, mp3, opus, opus_raw, pcm]}
         language: {type: string, description: ISO 639-1 code. The alias `lang` is also accepted.}
@@ -1042,6 +1046,15 @@ components:
       required: [detail]
       properties:
         detail: {type: string, description: A stable machine-readable code., example: unauthorized}
+    Problem:
+      type: object
+      description: A structured error response. The detail field carries a stable machine-readable code.
+      required: [type, title, status, detail]
+      properties:
+        type: {type: string, example: 'urn:frugale:problem:not_permitted'}
+        title: {type: string, example: Forbidden}
+        status: {type: integer, example: 403}
+        detail: {type: string, enum: [not_permitted, not_found], example: not_permitted}
     ValidationErrorDetail:
       type: object
       required: [detail]

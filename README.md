@@ -50,7 +50,7 @@ export KEY="<your proxy key>"
 | `runbooks/synth.md` | synthesize one text or a batch (consumer) |
 | `runbooks/models-and-formats.md` | the models + the audio formats, and how to pick |
 | `runbooks/opus-raw-decode.md` | decode the compact `opus_raw` format in your app |
-| `runbooks/streaming.md` | stream audio as it renders (advanced), and the latency guide (HTTP stream or WSS, how to tune a client) |
+| `runbooks/streaming.md` | stream audio as it renders (advanced): mu-law output, cancel (barge-in), a later `session.config`, and the latency guide (HTTP stream or WSS, how to tune a client) |
 | `runbooks/transcription.md` | transcribe an audio clip to text, JSON or streamed (preview, consumer) |
 
 ## Limits

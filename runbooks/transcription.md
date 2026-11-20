@@ -185,7 +185,9 @@ The `hotwords` parameter works with `"stream": true` too.
 
 ## Limits
 
-- At most 120 calls a minute per key. Above it: 429 `rate_limited`. Wait the
+- At most 600 calls a minute per key. The count is per location of the caller,
+  so a key that calls from more than one location can get more than 600 calls
+  through in total. Plan for 600. Above the limit: 429 `rate_limited`. Wait the
   `Retry-After` seconds.
 - `max_tokens` at most 2048. A clip longer than about 200 seconds needs more:
   split it into parts.
@@ -205,5 +207,5 @@ Every error is `{"detail": "<code>"}`.
 | 413 | `body_too_large` | Send a shorter clip. |
 | 429 | `rate_limited` | Wait `Retry-After` seconds. |
 | 502 | `upstream_error` | Retry. |
-| 503 | `asr_unavailable` | The service is busy or starting. Retry after `Retry-After` when present. |
+| 503 | `asr_unavailable` | The service is not ready. Retry after `Retry-After` when present. |
 | 503 | `auth_unavailable` | Retry. |

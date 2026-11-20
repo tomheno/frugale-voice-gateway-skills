@@ -3,8 +3,8 @@
 # Runbook: decode opus_raw
 
 `opus_raw` is the smallest format. It is bare libopus frames in an `OPUSRAW1`
-container, not a playable file. Store it upstream (small), then decode it in your
-client before playback, in any language. A batch returns `wav` unless you set
+container, not a playable file. Store it in your own system (it is small), then
+decode it in your client before playback, in any language. A batch returns `wav` unless you set
 `response_format`. Set `response_format: opus_raw` for the smallest payload.
 
 Use this when your backend stores synth output and your client decodes it. For a
