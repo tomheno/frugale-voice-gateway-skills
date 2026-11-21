@@ -1,6 +1,6 @@
 ---
 name: frugale-tts-streaming
-description: Stream frugale TTS audio as it renders - PCM/WAV chunks (/tts/stream, /tts/stream/wav) or WebSocket (/v1/audio/speech/stream, /v1/realtime). The WebSocket stream door also gives G.711 mu-law audio (format mulaw), a response.cancel frame for barge-in, and a later session.config that switches language or voice. Use only when playing audio live as it arrives. Also the latency guide - choose HTTP stream or WSS and tune the client for the fastest first audio. Needs a consumer key.
+description: Stream frugale TTS audio as it renders, as PCM/WAV chunks (/tts/stream, /tts/stream/wav) or over WebSocket (/v1/audio/speech/stream, /v1/realtime). The WebSocket stream door also gives G.711 mu-law audio (format mulaw). It takes a response.cancel frame for barge-in. It takes a later session.config that switches the language or the voice. Use only when you play audio live as it arrives. This skill also holds the latency guide. Choose the HTTP stream or WSS, and tune the client for the fastest first audio. Needs a consumer key.
 ---
 
 <!-- PUBLIC: distributable to customers. Soft index. The runbook carries the requests. -->
@@ -12,13 +12,13 @@ Most integrations use the unary synth (`frugale-tts-synth`). Use streaming
 only when you play audio live.
 
 Read `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/runbooks/streaming.md` for the four doors: PCM chunks, WAV frames,
-the WSS mirror, and the OpenAI-Realtime WSS door, with the request shapes. It
+the WSS stream door, and the Realtime door, with the request shapes. It
 also has the sections on mu-law output, on a later `session.config`, and on
 cancel.
 
 ## Latency checklist
 
-The runbook section "Latency: choose the path and tune the client" has the
+The runbook section "Latency: choose the door and tune the client" has the
 measured numbers and the rules. In short:
 
 - One short utterance you play live: HTTP stream (`POST /tts/stream`).
@@ -42,6 +42,11 @@ measured numbers and the rules. In short:
   seconds.
 - Send `session.config` again to change the language or the voice. A later config
   replaces the whole config: send `voice`, `lang` and `format` every time. The
-  model is fixed for the life of the socket. To change it, open a new socket.
+  model does not change for the life of the socket. To change it, open a new socket.
 
-Prerequisite: a `consumer` bearer and the shell setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md`.
+A model can be outside its service hours or still starting. The HTTP stream
+doors then return 503 with a `Retry-After` header. A new WSS session closes with
+code 1013, and the close reason is a code that starts with `deployment_`. Wait,
+then retry.
+
+Prerequisite: a `consumer` key and the shell setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md`.

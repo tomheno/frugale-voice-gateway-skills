@@ -1,25 +1,27 @@
 openapi: 3.1.0
 info:
   title: Frugale Voice Gateway API
-  version: 0.11.1
+  version: 0.13.0
   description: |
-    OpenAI-compatible text-to-speech HTTP API. It covers speech synthesis, batch
+    Drop-in compatible text-to-speech HTTP API. It covers speech synthesis, batch
     synthesis, voice management, the model alias list, and the proxy-key
     lifecycle. It also has a speech-to-text preview under `/v0` (tag
     `transcription`).
 
-    Every call sends `Authorization: Bearer <token>`. Two credential kinds exist:
-    a proxy key (role `consumer` or `customer_admin`) and a federated tenant JWT.
-    Each operation lists the kinds it accepts.
+    Every call sends `Authorization: Bearer <token>`. The token is a proxy key
+    (role `consumer` or `customer_admin`) or a federated tenant JWT. Each
+    operation lists the tokens it accepts.
 
     Limits. A synth request body is at most 64 KiB. A batch request body
     is at most 4 MiB. A voice `audio_base64` is at most 10 MiB.
 
     Errors. Gateway errors have the shape `{"detail": "<code>"}` where the code is
-    stable and machine-readable. An unknown model alias returns 422 with this
-    shape (code `unknown_model_alias`), not the field-validation shape.
+    stable and machine-readable. A request that fails field validation returns
+    422 with a list in `detail`. An unknown model alias returns 400 on the
+    speech route, with the text `invalid input: unknown model: <alias>` in
+    `detail`.
 
-    Streaming over WebSocket is described in the companion `asyncapi.yaml`.
+    The companion `asyncapi.yaml` describes streaming over WebSocket.
 servers:
   - url: https://api-otem.confidential-intelligence.com
     description: Primary (EU)
@@ -38,15 +40,15 @@ tags:
     description: |
       Speech-to-text preview. The `/v0` routes are a preview: a stable
       `/v1` transcription route replaces them later. The request and the answer
-      use the OpenAI chat-completions shape, with the audio as a base64 `data:`
+      use the chat-completions shape, with the audio as a base64 `data:`
       URL inside the message.
   - name: proxy-keys
     description: |
-      Proxy-key lifecycle. These routes are served on the admin
-      host, not the public synth host. Every admin response carries
-      `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and
-      `X-Frame-Options: DENY`. A malformed JSON body returns a plain-text 400,
-      415, or 422.
+      Proxy-key lifecycle. The admin host serves these routes, not the
+      public synth host. Every admin response carries
+      `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
+      `X-Frame-Options: DENY`, and `X-XSS-Protection: 0`. A malformed JSON body
+      returns a plain-text 400, 415, or 422.
 paths:
   /v1/audio/speech:
     post:
@@ -60,11 +62,16 @@ paths:
 
         Auth: consumer, customer_admin, or federated tenant JWT.
 
-        The request body is at most 64 KiB. An unknown
-        model alias returns 422 `unknown_model_alias` (an `ErrorDetail` body).
+        The request body is at most 64 KiB. An unknown model alias returns 400.
+        The `detail` text is `invalid input: unknown model: <alias>`.
 
         A voice id that does not exist returns 404 `voice_not_found`. A deleted
-        voice returns 410 `voice_tombstoned`.
+        voice returns 410. The `detail` is `voice_tombstoned: <voice id>`.
+
+        A model can be outside its service hours or still starting. Then the call
+        returns 503 with the code `deployment_stopped`, `deployment_starting`, or
+        `deployment_stopping` in `detail`, and a `Retry-After` header. Wait the
+        `Retry-After` seconds, then retry.
       requestBody:
         required: true
         content:
@@ -99,13 +106,15 @@ paths:
                   audio_duration: {type: number}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/VoiceNotFound'}
         '410': {$ref: '#/components/responses/Gone'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '422': {$ref: '#/components/responses/ValidationError'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/InternalError'}
         '502': {$ref: '#/components/responses/BadGateway'}
-        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        '503': {$ref: '#/components/responses/SynthUnavailable'}
         '504': {$ref: '#/components/responses/GatewayTimeout'}
   /v1/audio/speech/batch:
     post:
@@ -120,6 +129,16 @@ paths:
         An item with a voice id that does not exist fails on its own with
         `error.type` `voice_not_found`. The call still returns 200, and the other
         items are not affected.
+
+        An unknown model alias fails every item. The call still returns 200, and
+        each item has the `error.message` `invalid input: unknown model: <alias>`.
+
+        A model can be outside its service hours or still starting. Then each item
+        for that model fails, and the call still returns 200. The code
+        `deployment_stopped`, `deployment_starting`, or `deployment_stopping` is in
+        `error.type` and `error.message`. The call has no `Retry-After` header.
+        Wait, then retry the failed items. A single call to the same model gives
+        the wait in `Retry-After`.
 
         Auth: consumer, customer_admin, or federated tenant JWT.
       requestBody:
@@ -136,13 +155,11 @@ paths:
               schema: {$ref: '#/components/schemas/SpeechBatchResponse'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '410': {$ref: '#/components/responses/Gone'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '422': {$ref: '#/components/responses/ValidationError'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
-        '502': {$ref: '#/components/responses/BadGateway'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
-        '504': {$ref: '#/components/responses/GatewayTimeout'}
   /v1/voices:
     get:
       tags: [voices]
@@ -151,10 +168,10 @@ paths:
       description: |
         Auth: customer_admin key. Unknown query params return 400.
       parameters:
-        - {name: lang, in: query, schema: {type: string}, description: ISO 639-1 filter.}
-        - {name: status, in: query, schema: {type: string, enum: [ready, draft, all]}}
+        - {name: lang, in: query, schema: {type: string}, description: 'ISO 639-1. Keeps the voices of that language. A language that the service does not serve gives an empty list.'}
+        - {name: status, in: query, schema: {type: string, enum: [ready, draft, all]}, description: 'all means no filter.'}
         - {name: sort_by, in: query, schema: {type: string, enum: [name, created_at], default: created_at}}
-        - {name: sort_order, in: query, schema: {type: string, enum: [asc, desc], default: desc}}
+        - {name: sort_order, in: query, schema: {type: string, enum: [asc, desc], default: desc}, description: 'desc is newest first.'}
       responses:
         '200':
           description: Voice list.
@@ -164,12 +181,14 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/VoiceForbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
     post:
       tags: [voices]
       operationId: createVoice
       summary: Create a voice from base64 audio
       description: |
-        Auth: customer_admin key. The reference clip must be 12
+        Auth: customer_admin key. The reference clip must be 15.5
         seconds or less. A longer clip gives HTTP 400. `audio_base64` is at most
         10 MiB.
       requestBody:
@@ -183,7 +202,7 @@ paths:
                 audio_base64: {type: string, description: Base64 audio. At most 10 MiB.}
                 name:
                   type: string
-                  description: 'Allowed: letters, digits, space, - _ . Other characters are removed. Truncated to 100 characters. 400 if empty after cleaning.'
+                  description: 'Allowed: letters, digits, space, - _ . The gateway removes other characters and cuts the name to 100 characters. 400 if the name is empty after cleaning.'
                 lang:
                   type: string
                   default: fr
@@ -195,7 +214,7 @@ paths:
                 consent_to_backend_mirror:
                   type: boolean
                   default: false
-                  description: Default false. Set true to allow a copy of the reference clip on the servers that run synthesis. Without consent, synthesis with this voice can fail with voice not available.
+                  description: Default false. Set true to allow a copy of the reference clip on the servers that run synthesis. Without consent, synthesis with this voice can fail with voice not available. The multipart upload route accepts true, 1, yes, on.
       responses:
         '201':
           description: Voice created.
@@ -207,13 +226,15 @@ paths:
         '403': {$ref: '#/components/responses/VoiceForbidden'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '422': {$ref: '#/components/responses/ValidationError'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/voices/upload:
     post:
       tags: [voices]
       operationId: uploadVoice
       summary: Create a voice from a multipart upload
       description: |
-        Auth: customer_admin key. The reference clip must be 12
+        Auth: customer_admin key. The reference clip must be 15.5
         seconds or less. A longer clip gives HTTP 400.
       requestBody:
         required: true
@@ -226,7 +247,7 @@ paths:
                 audio: {type: string, format: binary}
                 name:
                   type: string
-                  description: 'Allowed: letters, digits, space, - _ . Other characters are removed. Truncated to 100 characters. 400 if empty after cleaning.'
+                  description: 'Allowed: letters, digits, space, - _ . The gateway removes other characters and cuts the name to 100 characters. 400 if the name is empty after cleaning.'
                 lang:
                   type: string
                   default: fr
@@ -238,7 +259,7 @@ paths:
                 consent_to_backend_mirror:
                   type: boolean
                   default: false
-                  description: Default false. Set true to allow a copy of the reference clip on the servers that run synthesis. Without consent, synthesis with this voice can fail with voice not available. The multipart upload also accepts true, 1, yes, on.
+                  description: Default false. Set true to allow a copy of the reference clip on the servers that run synthesis. Without consent, synthesis with this voice can fail with voice not available. This multipart field accepts true, 1, yes, or on in any letter case. Any other value, or no value, means false.
       responses:
         '201':
           description: Voice created.
@@ -250,6 +271,8 @@ paths:
         '403': {$ref: '#/components/responses/VoiceForbidden'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '422': {$ref: '#/components/responses/ValidationError'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/voices/{uid}:
     parameters:
       - {$ref: '#/components/parameters/VoiceUid'}
@@ -270,8 +293,9 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/VoiceForbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
+        '404': {$ref: '#/components/responses/VoiceNotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
     patch:
       tags: [voices]
       operationId: updateVoice
@@ -286,7 +310,7 @@ paths:
               properties:
                 name:
                   type: string
-                  description: 'Allowed: letters, digits, space, - _ . Other characters are removed. Truncated to 100 characters. 400 if empty after cleaning.'
+                  description: 'Allowed: letters, digits, space, - _ . The gateway removes other characters and cuts the name to 100 characters. 400 if the name is empty after cleaning.'
                 is_favorite: {type: boolean}
       responses:
         '200':
@@ -297,16 +321,18 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/VoiceForbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
+        '404': {$ref: '#/components/responses/VoiceNotFound'}
         '422': {$ref: '#/components/responses/ValidationError'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
     delete:
       tags: [voices]
       operationId: deleteVoice
       summary: Delete a voice
       description: |
-        Auth: customer_admin key. After the delete, the voice id returns 410
-        `voice_tombstoned`. A voice that the service itself uses gives 409 and is
-        not deleted. Contact us.
+        Auth: customer_admin key. After the delete, the voice id returns 410. The
+        `detail` of that answer starts with `voice_tombstoned`. A voice that the
+        service itself uses gives 409. The gateway does not delete it. Contact us.
       responses:
         '200':
           description: Deleted.
@@ -321,13 +347,14 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/VoiceForbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
+        '404': {$ref: '#/components/responses/VoiceNotFound'}
         '409':
-          description: The service itself uses this voice, so it cannot be deleted. Contact us.
+          description: The service itself uses this voice, so you cannot delete it. Contact us.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorDetail'}
               example: {detail: voice_is_pack_default}
+        '500': {$ref: '#/components/responses/InternalError'}
         '502': {$ref: '#/components/responses/BadGateway'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/voices/{uid}/confirm:
@@ -339,7 +366,8 @@ paths:
       summary: Confirm a draft voice
       description: |
         Auth: customer_admin key. Voices created through the
-        gateway are already ready. Confirm applies only to a legacy draft.
+        gateway are already ready. `confirm` applies only to a legacy draft. A
+        `confirm` call on a voice that is not a draft returns 409.
       responses:
         '200':
           description: The confirmed voice.
@@ -349,12 +377,14 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/VoiceForbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
+        '404': {$ref: '#/components/responses/VoiceNotFound'}
         '409':
-          description: Voices created through the gateway are already ready. Confirm applies only to a legacy draft.
+          description: The voice is not a draft. The `detail` is plain text, for example `voice '<uid>' is ready, not draft`. It is not a stable code.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorDetail'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/models:
     get:
       tags: [models]
@@ -370,10 +400,10 @@ paths:
           description: Alias list.
           content:
             application/json:
-              schema:
-                type: object
-                additionalProperties: true
+              schema: {$ref: '#/components/schemas/ModelsList'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v0/chat/completions:
     post:
       tags: [transcription]
@@ -405,10 +435,10 @@ paths:
         hold an audio part and `max_tokens`. `max_tokens` is at most 2048. Send only the fields of
         the request schema. A body that breaks a rule returns 400 `invalid_request`.
 
-        Rate limit. At most 600 calls a minute per key. The count is per
-        location of the caller, so a key that calls from more than one location
-        can get more than 600 calls through in total. Plan for 600. Above the
-        limit: 429 `rate_limited` with `Retry-After`.
+        Rate limit. At most 600 calls a minute per key. The service counts the
+        calls of a key separately for each caller location. A key that calls from
+        more than one location can send more than 600 calls in total. Plan for
+        600. Above the limit: 429 `rate_limited` with `Retry-After`.
 
         Auth: consumer key.
       parameters:
@@ -486,7 +516,7 @@ paths:
               schema: {$ref: '#/components/schemas/ErrorDetail'}
               example: {detail: upstream_error}
         '503':
-          description: '`asr_unavailable`: the service is not ready, retry after `Retry-After` when present. `auth_unavailable`: the key check is not available now, retry.'
+          description: '`asr_unavailable`: the service is not ready, retry after `Retry-After` when present. `auth_unavailable`: the service cannot check the key now, retry.'
           headers:
             Retry-After:
               schema: {type: integer}
@@ -503,13 +533,18 @@ paths:
       operationId: mintProxyKey
       summary: Mint a proxy key
       description: |
-        The bearer is returned once. Store it at once. Omitted `expires_at` gives
-        90 days. A customer_admin key is limited to 90 days. An `expires_at` in the
-        past gives 400.
+        The response shows the `bearer` once. Store it at once. Omitted
+        `expires_at` gives 90 days. A customer_admin key can set at most 90 days.
+        An `expires_at` in the past gives 400.
 
         A customer_admin key can mint only consumer keys for its own customer_id.
 
-        On a 500 no bearer is issued and no state changes, so a retry is safe.
+        A customer can hold a limited number of active consumer keys. The default
+        limit is 1000. Above it, the call returns 403 `customer_key_quota_exceeded`.
+        Revoke a key that you do not use, then mint again.
+
+        On a 500 the response has no `bearer` and the gateway stores no key, so a
+        retry is safe.
 
         Auth: customer_admin key.
       requestBody:
@@ -542,9 +577,11 @@ paths:
               examples:
                 invalid_customer_id: {value: {detail: invalid_customer_id}}
                 invalid_expires_at: {value: {detail: invalid_expires_at}}
+                malformed_bearer: {value: {detail: malformed_bearer}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/AdminForbidden'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /admin/proxy-keys/{kid}/rotate:
     servers: *adminServers
     parameters:
@@ -554,14 +591,25 @@ paths:
       operationId: rotateProxyKey
       summary: Rotate a proxy key
       description: |
-        Returns a successor bearer. Default grace_secs is 0: the old key is
-        revoked at once. A customer_admin value above 300 is lowered to 300. The
-        successor gets a fresh 90-day expiry and keeps the same tier,
-        customer_id, and role.
+        Returns a successor key. The default `grace_secs` is 0: the gateway
+        revokes the old key at once. The gateway lowers a customer_admin value
+        above 300 to 300. The successor gets a fresh 90-day expiry and keeps the
+        same tier, customer_id, and role.
 
         A customer_admin cannot manage customer_admin keys.
 
-        On a 500 no bearer is issued and no state changes, so a retry is safe.
+        A key that you already rotated gives 409 `proxy_key_already_superseded`.
+        A key that you revoked gives 409 `proxy_key_revoked`.
+
+        A 500 can come after the gateway stored the successor key. The response
+        then holds no `new_bearer`. List your keys before you retry. Revoke any
+        new key that you do not hold.
+
+        A retry after a 500 can give 409 `proxy_key_already_superseded`. Then the
+        rotate half finished: the gateway replaced the old key, and you hold no
+        key for the successor. Read the old key with
+        `GET /admin/proxy-keys/{kid}`. Its `superseded_by` field names the
+        successor. Revoke the successor, then mint a new consumer key.
 
         Auth: customer_admin key.
       requestBody:
@@ -570,6 +618,7 @@ paths:
           application/json:
             schema:
               type: object
+              description: The minimal body is `{}`.
               properties:
                 grace_secs: {type: integer, minimum: 0, default: 0}
                 reason: {type: string}
@@ -584,12 +633,15 @@ paths:
         '403': {$ref: '#/components/responses/AdminForbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: The key is already superseded.
+          description: The key is already rotated (`proxy_key_already_superseded`) or revoked (`proxy_key_revoked`).
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorDetail'}
-              example: {detail: proxy_key_already_superseded}
+              examples:
+                proxy_key_already_superseded: {value: {detail: proxy_key_already_superseded}}
+                proxy_key_revoked: {value: {detail: proxy_key_revoked}}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /admin/proxy-keys/{kid}:
     servers: *adminServers
     parameters:
@@ -611,6 +663,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
     delete:
       tags: [proxy-keys]
       operationId: revokeProxyKey
@@ -623,7 +676,7 @@ paths:
         Auth: customer_admin key.
       responses:
         '200':
-          description: Revoked.
+          description: Revoked. The body is `{kid, revoked_at}`.
           content:
             application/json:
               schema:
@@ -635,6 +688,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /admin/proxy-keys:
     servers: *adminServers
     get:
@@ -649,6 +703,7 @@ paths:
       parameters:
         - {name: cursor, in: query, schema: {type: string}, description: Cursor from the previous page.}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: customer_id, in: query, schema: {type: string}, description: 'Filter by customer_id. A customer_admin key sees only its own customer.'}
         - {name: tier, in: query, schema: {type: string}}
         - {name: minted_by, in: query, schema: {type: string}, description: Filter by the kid of the minting customer_admin key.}
         - {name: include_revoked, in: query, schema: {type: boolean, default: false}}
@@ -670,6 +725,7 @@ paths:
                     description: Count before pagination.
         '401': {$ref: '#/components/responses/Unauthorized'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
 components:
   securitySchemes:
     bearerAuth:
@@ -677,11 +733,11 @@ components:
       scheme: bearer
       description: |
         `Authorization: Bearer <token>`. The token is a proxy key or a federated
-        tenant JWT. A
-        missing header or a non-Bearer scheme returns 401 with a
-        `WWW-Authenticate` header for the `Bearer` scheme. A structurally
-        malformed token returns 400 `malformed_bearer`. On the voice routes, a
-        malformed proxy key returns 403 `proxy_key_not_authorized_for_voice_crud`.
+        tenant JWT. A bad token, a missing header, or a non-Bearer scheme returns
+        401 with a `WWW-Authenticate` header that names the `Bearer` scheme. A
+        structurally malformed token returns 400 `malformed_bearer`. On the voice
+        routes, a malformed proxy key returns 403
+        `proxy_key_not_authorized_for_voice_crud`.
   parameters:
     VoiceUid:
       name: uid
@@ -700,8 +756,9 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
+          example: {detail: malformed_bearer}
     Unauthorized:
-      description: Missing or bad credential.
+      description: Missing or bad token.
       headers:
         WWW-Authenticate:
           schema: {type: string, example: Bearer}
@@ -710,22 +767,56 @@ components:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
           example: {detail: unauthorized}
     VoiceForbidden:
-      description: 'The key is not allowed for voice routes: a valid key whose role is not customer_admin, for example a consumer key, or a malformed proxy key. Use your customer_admin key.'
+      description: |
+        The key is not allowed for voice routes. Use your customer_admin key.
+
+        A valid key with the wrong role, for example a consumer key, gets
+        `application/problem+json` and the code `not_permitted`.
+
+        A malformed proxy key gets `application/json` and the code
+        `proxy_key_not_authorized_for_voice_crud`.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example: {type: 'urn:frugale:problem:not_permitted', title: Forbidden, status: 403, detail: not_permitted}
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+          example: {detail: proxy_key_not_authorized_for_voice_crud}
+    Forbidden:
+      description: The role of the key is not allowed to use this route.
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
           example: {type: 'urn:frugale:problem:not_permitted', title: Forbidden, status: 403, detail: not_permitted}
     AdminForbidden:
-      description: 'You are not allowed to mint this key. A customer_admin key can mint only a consumer key, and only in your own tenant.'
+      description: |
+        The key is not allowed to do this.
+
+        The code `not_permitted` (`application/problem+json`) means that the role
+        or the target is not allowed. A customer_admin key can mint only a
+        consumer key, and only for its own customer_id.
+
+        The code `customer_key_quota_exceeded` (`application/json`) means that
+        the customer already holds the maximum number of active consumer keys.
+        The default maximum is 1000.
+
+        The code `forbidden` (`application/json`) means that the gateway does not
+        accept this kind of key here.
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
           example: {type: 'urn:frugale:problem:not_permitted', title: Forbidden, status: 403, detail: not_permitted}
-    NotFound:
-      description: Not found.
-      content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
+          examples:
+            customer_key_quota_exceeded: {value: {detail: customer_key_quota_exceeded}}
+            forbidden: {value: {detail: forbidden}}
+    NotFound:
+      description: The key id does not exist, belongs to another customer, or is a customer_admin key that you cannot manage. The answer is the same in all three cases.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example: {type: 'urn:frugale:problem:not_found', title: Not Found, status: 404, detail: not_found}
     VoiceNotFound:
       description: |
         The voice id does not exist. Create the voice, or use a voice id that
@@ -735,7 +826,7 @@ components:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
           example: {detail: voice_not_found}
     Gone:
-      description: The voice was deleted.
+      description: 'A delete removed this voice. The `detail` is `voice_tombstoned: <voice id>`.'
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
@@ -755,10 +846,51 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
     ServiceUnavailable:
-      description: The service is not available now. Retry later.
+      description: |
+        The service is not available now. Retry later.
+
+        The policy engine answers 503 with the code `unavailable` and
+        `Retry-After: 1` when it cannot decide a request. This answer can come
+        from every route in this file except `/v0`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before the retry. The policy engine sends 1.
+          schema: {type: integer}
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example: {type: 'urn:frugale:problem:unavailable', title: Service Unavailable, status: 503, detail: unavailable}
+    SynthUnavailable:
+      description: |
+        The service is not available now. Retry later.
+
+        A model can be outside its service hours or still starting. Then `detail`
+        is `deployment_stopped` (outside its service hours), `deployment_starting`
+        (still starting), or `deployment_stopping` (about to stop). A `Retry-After`
+        header gives the seconds to wait. Wait that long, then retry.
+
+        The policy engine answers 503 with the code `unavailable` and
+        `Retry-After: 1` when it cannot decide a request.
+      headers:
+        Retry-After:
+          description: |
+            Seconds to wait before the retry. A model that starts or stops
+            sends 60. A model outside its service hours sends the seconds until its
+            next start, or 3600 when the gateway knows no time.
+            The policy engine sends 1.
+          schema: {type: integer}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorDetail'}
+          examples:
+            deployment_stopped: {value: {detail: deployment_stopped}}
+            deployment_starting: {value: {detail: deployment_starting}}
+            deployment_stopping: {value: {detail: deployment_stopping}}
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example: {type: 'urn:frugale:problem:unavailable', title: Service Unavailable, status: 503, detail: unavailable}
     GatewayTimeout:
       description: The service did not answer in time.
       content:
@@ -770,14 +902,16 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorDetail'}
     ValidationError:
-      description: Request validation failed. An unknown model alias returns 422 `unknown_model_alias` with an `ErrorDetail` body instead.
+      description: Request validation failed. The `detail` field is a list of the faults.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ValidationErrorDetail'}
+          example: {detail: [{type: string_too_short, loc: [body, input], msg: String should have at least 1 character, ctx: {min_length: 1}}]}
   schemas:
     SpeechRequest:
       type: object
       required: [input]
+      example: {"input":"Bonjour, ceci est un essai de synthese vocale.","voice":"v-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","model":"hulotte","response_format":"wav","lang":"fr"}
       properties:
         input:
           type: string
@@ -786,13 +920,13 @@ components:
           description: Text to speak. The alias `text` is also accepted.
         model:
           type: string
-          description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
+          description: Model alias. A free string. Omit to use the default model. Read the live list from `GET /v1/models`.
           examples: [hulotte, chevechette, linotte, lyre, hulotte-lb-preview]
         voice:
           type: string
           default: default
           pattern: '^[A-Za-z0-9_-]{1,128}$'
-          description: Voice uid of a stored voice, or `default` (the tenant default voice). Alias `voice_id`.
+          description: Voice uid of a stored voice, or `default` (the default voice). Alias `voice_id`.
         response_format:
           type: string
           enum: [wav, mp3, opus, opus_raw, pcm]
@@ -804,10 +938,11 @@ components:
         timestamp_granularities:
           type: array
           items: {type: string, enum: [word]}
-          description: Only `word` is honored. With `["word"]` the response is JSON.
+          description: The gateway honors only `word`. With `["word"]` the response is JSON. The call returns 400 when word timestamps are not available, or when the audio is over 1800 seconds.
     SpeechBatchItem:
       type: object
       required: [input]
+      example: {"input":"Premiere phrase a synthetiser.","voice":"v-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
       properties:
         input: {type: string, description: Text to speak. The alias `text` is also accepted.}
         voice: {type: string}
@@ -819,6 +954,7 @@ components:
     SpeechBatchRequest:
       type: object
       required: [items]
+      example: {"items":[{"input":"Premiere phrase.","voice":"v-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},{"input":"Deuxieme phrase.","voice":"v-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}],"model":"hulotte","response_format":"wav"}
       properties:
         items:
           type: array
@@ -828,7 +964,7 @@ components:
           items: {$ref: '#/components/schemas/SpeechBatchItem'}
         model:
           type: string
-          description: Model alias. A free string. Omit to use the tenant default alias. Read the live list from `GET /v1/models`.
+          description: Model alias. A free string. Omit to use the default model. Read the live list from `GET /v1/models`.
           examples: [hulotte, chevechette, linotte, lyre, hulotte-lb-preview]
         voice: {type: string}
         response_format: {type: string, enum: [wav, mp3, opus, opus_raw, pcm]}
@@ -836,6 +972,7 @@ components:
         timestamp_granularities:
           type: array
           items: {type: string, enum: [word]}
+          description: The gateway honors only `word`. With `["word"]` each result has `words` and `audio_duration`. The whole call returns 400 when word timestamps are not available. An item with audio over 1800 seconds keeps its audio and gets `words_error` `over_align_cap`.
     SpeechBatchResult:
       type: object
       required: [index, status]
@@ -852,13 +989,20 @@ components:
             total_tokens: {type: integer}
         error:
           type: object
+          description: The error of the item.
           required: [message, type]
           properties:
             message: {type: string}
             type:
               type: string
-              description: A stable error token. `voice_not_found` means the voice id does not exist. New values can appear.
-              examples: [voice_not_found]
+              description: |
+                A stable error code. New codes can appear.
+
+                - `voice_not_found`: the voice id does not exist.
+                - `deployment_stopped`: the model is outside its service hours.
+                - `deployment_starting`: the model is still starting.
+                - `deployment_stopping`: the model is about to stop.
+              examples: [voice_not_found, deployment_stopped]
         words:
           type: array
           items:
@@ -869,13 +1013,14 @@ components:
               end: {type: number}
         words_error:
           type: string
-          description: Set when alignment was requested, synthesis succeeded, and no words came back. The item keeps `audio_data` and `audio_duration` and omits `words`. Known values are aligner_unavailable, aligner_rejected, over_align_cap, missing_samples, resample_failed. New values can appear.
+          description: Present when the request asked for alignment, synthesis worked, and no words came back. The item keeps `audio_data` and `audio_duration` and omits `words`. Known values are aligner_unavailable, aligner_rejected, over_align_cap, missing_samples, resample_failed. New values can appear.
         audio_duration: {type: number}
     SpeechBatchResponse:
       type: object
       required: [id, results, total, succeeded, failed]
+      example: {"id":"speech-batch-3f2c1a9e7b104d2e9a6f0c1d2e3f4a5b","results":[{"index":0,"status":"success","audio_data":"UklGRi...","media_type":"audio/wav","usage":{"input_tokens":30,"output_tokens":90,"total_tokens":120}},{"index":1,"status":"error","error":{"message":"voice_not_found","type":"voice_not_found"}}],"total":2,"succeeded":1,"failed":1}
       properties:
-        id: {type: string, example: 'speech-batch-<uuid>'}
+        id: {type: string, example: speech-batch-3f2c1a9e7b104d2e9a6f0c1d2e3f4a5b}
         results:
           type: array
           items: {$ref: '#/components/schemas/SpeechBatchResult'}
@@ -884,6 +1029,8 @@ components:
         failed: {type: integer}
     VoiceResponse:
       type: object
+      required: [uid, name, lang, duration_s, transcript, identifier, created_at, status, is_favorite, vector_models]
+      example: {"uid":"v-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","name":"narrator_fr","lang":"fr","duration_s":7.44,"transcript":"La ville dormait sous la neige.","identifier":"","created_at":"2026-10-07T15:13:11Z","status":"ready","is_favorite":false,"vector_models":[]}
       properties:
         uid: {type: string}
         name: {type: string}
@@ -891,12 +1038,17 @@ components:
         duration_s: {type: number}
         transcript: {type: string}
         identifier: {type: string, description: 'Client-supplied external id, empty if none.'}
-        created_at: {type: string}
+        created_at: {type: string, description: ISO 8601 UTC time.}
         status: {type: string, enum: [ready, draft]}
         is_favorite: {type: boolean}
+        vector_models:
+          type: array
+          items: {type: string}
+          description: The sorted ids of the models for which the voice holds a stored speaker vector. The list is always present. It is empty when the voice holds none.
     VoiceListResponse:
       type: object
       required: [voices, count, lang_counts]
+      example: {"voices":[{"uid":"v-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","name":"narrator_fr","lang":"fr","duration_s":7.44,"transcript":"La ville dormait sous la neige.","identifier":"","created_at":"2026-10-07T15:13:11Z","status":"ready","is_favorite":false,"vector_models":[]}],"count":1,"lang_counts":{"fr":1}}
       properties:
         voices:
           type: array
@@ -909,6 +1061,7 @@ components:
     ProxyKeyRecord:
       type: object
       required: [kid, tier, customer_id, expires_at, issued_at, role]
+      example: {"kid":"pk_0123456789abcdef0123456789abcdef","tier":"standard","customer_id":"your-tenant","role":"consumer","issued_at":1791900000,"expires_at":1799676000,"revoked_at":null,"superseded_by":null,"minted_by":"pk_fedcba9876543210fedcba9876543210"}
       properties:
         kid: {type: string}
         tier: {type: string}
@@ -923,6 +1076,7 @@ components:
           description: kid of the customer_admin key that minted this key.
     ProxyKeyMintResponse:
       type: object
+      example: {"kid":"pk_0123456789abcdef0123456789abcdef","bearer":"YOUR_NEW_KEY","tier":"standard","customer_id":"your-tenant","expires_at":1799676000}
       properties:
         kid: {type: string}
         bearer:
@@ -933,6 +1087,7 @@ components:
         expires_at: {type: integer}
     ProxyKeyRotateResponse:
       type: object
+      example: {"old_kid":"pk_0123456789abcdef0123456789abcdef","new_kid":"pk_fedcba9876543210fedcba9876543210","new_bearer":"YOUR_NEW_KEY","expires_at":1799676000}
       properties:
         old_kid: {type: string}
         new_kid: {type: string}
@@ -1041,9 +1196,27 @@ components:
                   content: {type: string, description: The next part of the transcript.}
               finish_reason: {type: [string, 'null'], enum: [stop, length, null]}
         usage: {$ref: '#/components/schemas/TranscriptionUsage'}
+    ModelInfo:
+      type: object
+      required: [id, object, owned_by, description]
+      properties:
+        id: {type: string, description: The model alias. Pass it as `model`., example: hulotte}
+        object: {type: string, const: model}
+        owned_by: {type: string, example: frugale}
+        description: {type: string, example: Model alias.}
+    ModelsList:
+      type: object
+      required: [object, data]
+      example: {"object":"list","data":[{"id":"hulotte","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"chevechette","object":"model","owned_by":"frugale","description":"Model alias."}]}
+      properties:
+        object: {type: string, const: list}
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/ModelInfo'}
     ErrorDetail:
       type: object
       required: [detail]
+      example: {"detail":"unauthorized"}
       properties:
         detail: {type: string, description: A stable machine-readable code., example: unauthorized}
     Problem:
@@ -1051,13 +1224,18 @@ components:
       description: A structured error response. The detail field carries a stable machine-readable code.
       required: [type, title, status, detail]
       properties:
-        type: {type: string, example: 'urn:frugale:problem:not_permitted'}
+        type: {type: string, example: 'urn:frugale:problem:not_permitted', description: 'The URN of the code. It ends with the value of `detail`.'}
         title: {type: string, example: Forbidden}
         status: {type: integer, example: 403}
-        detail: {type: string, enum: [not_permitted, not_found], example: not_permitted}
+        detail:
+          type: string
+          enum: [not_permitted, not_found, unavailable]
+          example: not_permitted
+          description: '`not_permitted` comes with 403. `not_found` comes with 404. `unavailable` comes with 503 and `Retry-After: 1`.'
     ValidationErrorDetail:
       type: object
       required: [detail]
+      example: {"detail":[{"type":"string_too_short","loc":["body","input"],"msg":"String should have at least 1 character","ctx":{"min_length":1}}]}
       properties:
         detail:
           type: array

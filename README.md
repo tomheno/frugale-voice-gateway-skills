@@ -30,8 +30,9 @@ Two key roles:
 - `consumer`. A synth-only key. Put this in the backend that calls synth. Mint
   it yourself from your `customer_admin`.
 
-A bearer prints ONCE, at mint or rotate. The gateway stores metadata only, never
-the bearer, so you can not read it back. Store it in a vault. If a key leaks, rotate it.
+The gateway shows a key ONCE, at mint or rotate. It stores metadata only, never
+the key itself, so you cannot read it back. Store the key in a vault. If a key
+leaks, rotate it.
 
 Set your shell for the runbooks:
 
@@ -56,10 +57,10 @@ export KEY="<your proxy key>"
 ## Limits
 
 - A batch carries at most 16 items.
-- A consumer key a customer_admin mints is capped at 90 days. Rotate before it
-  expires.
-- A voice reference clip MUST be 12 seconds or less (a longer clip is rejected
-  with HTTP 400). See `runbooks/voices.md`.
+- A customer_admin can mint a consumer key for at most 90 days. Rotate the key
+  before it expires.
+- A voice reference clip MUST be 15.5 seconds or less. A longer clip gets
+  HTTP 400. See `runbooks/voices.md`.
 - Voices and synth belong to your tenant.
 
 ## Machine-readable specs

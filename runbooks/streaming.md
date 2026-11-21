@@ -6,7 +6,7 @@ Stream audio as it renders, instead of waiting for the whole clip. Use a
 `consumer` key. Most integrations use the unary `POST /v1/audio/speech`
 (`synth.md`). Use streaming only when you play audio live as it arrives.
 
-Set your shell (see `../README.md`): `SYNTH`, `KEY` (a `consumer` bearer),
+Set your shell (see `../README.md`): `SYNTH`, `KEY` (a `consumer` key),
 `VOICE`.
 
 ## Four doors
@@ -15,8 +15,8 @@ Set your shell (see `../README.md`): `SYNTH`, `KEY` (a `consumer` bearer),
 |---|---|---|
 | PCM chunks | `POST /tts/stream` | chunked `audio/pcm`, headers `x-sample-rate` (the rate depends on the model) and `x-channels: 1`, 16-bit mono PCM |
 | WAV frames | `POST /tts/stream/wav` | chunked `application/octet-stream`, each frame = `[4-byte big-endian length][WAV chunk]` |
-| WSS mirror | `GET /v1/audio/speech/stream` (upgrade) | WebSocket, binary audio frames (`pcm` or `mulaw`) |
-| OpenAI-Realtime | `GET /v1/realtime` (upgrade) | WebSocket, OpenAI-Realtime control frames |
+| WSS stream | `GET /v1/audio/speech/stream` (upgrade) | WebSocket, binary audio frames (`pcm` or `mulaw`) |
+| Realtime | `GET /v1/realtime` (upgrade) | WebSocket, Realtime control frames |
 
 The two `POST /tts/stream*` doors take the same body as `POST /v1/audio/speech`
 (`synth.md`, `SpeechRequest`). The unary `POST /v1/audio/speech` does NOT stream.
@@ -41,8 +41,8 @@ curl -sS -N -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 
 `GET /v1/audio/speech/stream` and `GET /v1/realtime` are WebSocket upgrades, not
 cURL calls. Open a WebSocket with the `Authorization: Bearer <consumer>` header,
-then send the synth control frames. Connect from a server-side client. Use `/v1/realtime` for an OpenAI-Realtime
-client. Use `/v1/audio/speech/stream` for a plain synth mirror that returns
+then send the synth control frames. Connect from a server-side client. Use `/v1/realtime` for a Realtime
+client. Use `/v1/audio/speech/stream` for a plain synth stream that returns
 binary audio frames.
 
 ### Session contract (`/v1/audio/speech/stream`)
@@ -127,14 +127,14 @@ Send `session.config` again on the open socket. You do not reconnect.
   and the server did not start to speak is spoken in the new language. A
   sentence in progress does not change.
 - A `format` change applies at the next `audio.start`, never inside a sentence.
-  In the middle of a response it takes effect at a later sentence of that
-  response. Each sentence is self-consistent: its `audio.start` names its format.
+  In the middle of a response it takes effect at a later sentence in that
+  response. Each sentence keeps one format: its `audio.start` names the format.
 - A language that the model does not support closes the socket with code 1008.
 - An unknown voice gives a non-fatal `error` frame with `error_type`
   `voice_not_found`. A deleted voice gives `voice_tombstoned`. The session keeps
   its voice. New `error_type` values can appear.
-- The model is fixed for the life of the socket. A different `model` in a later
-  config has no effect. To use another model, open a new socket.
+- The model does not change for the life of the socket. A different `model` in a
+  later config has no effect. To use another model, open a new socket.
 
 ### Cancel a response
 
@@ -176,25 +176,39 @@ Limits:
 - A cancel can arrive while the server still has frames that you sent before
   it. The server drops the `input.text` and `input.done` frames. It keeps
   `session.close`. It holds each `session.config` frame, and each frame that does
-  not parse, until the cancel is done. It holds at most 16 frames and 1 MiB in
+  not parse, until the cancel ends. It holds at most 16 frames and 1 MiB in
   all. A held frame counts the length of its text plus 256 bytes. The first held
   frame is always held, whatever its size. Above the limit the socket closes with
   code 1008. Wait for the `session.done` of the cancel before you send more
   frames.
 
-## Latency: choose the path and tune the client
+## When a model is not available
+
+A model can be outside its service hours or still starting.
+
+- The HTTP stream doors (`POST /tts/stream` and `POST /tts/stream/wav`) return
+  503. The `detail` is `deployment_stopped`, `deployment_starting`, or
+  `deployment_stopping`. The `Retry-After` header gives the seconds to wait.
+  Wait that long, then retry.
+- A new WSS session on that model closes with code 1013. The close reason is
+  the same code. A close has no `Retry-After` value. Wait, then open a new
+  session.
+- An open WSS session closes with code 1001 and the reason `server draining`
+  when its model stops. Open a new session when the model serves again.
+
+## Latency: choose the door and tune the client
 
 Measured on 2026-10-13. Client in Europe, EU gateway, 61 ms median round trip
-to the gateway, one stored voice, one French sentence of about 4 seconds of
-audio, 10 interleaved rounds per path. The service was in regular use, not idle.
+to the gateway, one stored voice, one French sentence with about 4 seconds of
+audio, 10 interleaved rounds per door. The service was in regular use, not idle.
 These are measurements, not guarantees. Your numbers change with your network.
 
-| path | you wait for | median | p90 |
+| door | you wait for | median | p90 |
 |---|---|---|---|
 | `POST /tts/stream` (or `POST /tts/stream/wav`) | the first chunk | 312.5 ms | 376.0 ms |
 | `POST /v1/audio/speech` (unary) | the whole file | 420.8 ms | 498.7 ms |
 | WSS, `session.config` sent before the text | first audio after the text frame | 317.9 ms | 342.5 ms |
-| WSS, `session.config` sent in the same burst as the text | first audio after the text frame | 419.7 ms | 444.4 ms |
+| WSS, `session.config` in the same burst as the text | first audio after the text frame | 419.7 ms | 444.4 ms |
 | WSS, new session (once per conversation) | the handshake: TCP, TLS and the upgrade, about 3 round trips | 203.2 ms | 206.8 ms |
 
 Our own gateway time for the same request is about 270 ms (EU, service not idle).
@@ -204,7 +218,7 @@ The first audio of a session can arrive later after a long idle. The first audio
 after a language or voice change, or after a cancel that cut a response, can come
 later than after a normal turn.
 
-### Choose the path
+### Choose the door
 
 | your case | use |
 |---|---|
@@ -267,5 +281,5 @@ asyncio.run(main())
 
 ## See also
 
-- `synth.md`: the unary + batch paths (the common case).
+- `synth.md`: the unary + batch routes (the common case).
 - `models-and-formats.md`: models + formats.

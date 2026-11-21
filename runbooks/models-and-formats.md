@@ -16,8 +16,11 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 ```
 
 The reply is `{object:"list", data:[{id, object:"model", owned_by:"frugale", description}]}`.
-The `id` is the alias you pass as `model`. An unknown alias returns HTTP 422
-`unknown_model_alias`. Omit `model` to use the tenant default.
+The `id` is the alias you pass as `model`. Omit `model` to use the default model.
+
+An unknown alias returns HTTP 400 on `/v1/audio/speech`. The `detail` text is
+`invalid input: unknown model: <alias>`. In a batch, every item fails with the
+same text in `error.message`, and the call still returns 200.
 
 Current aliases:
 
@@ -26,8 +29,14 @@ Current aliases:
 | `hulotte` | default, fast | de, en, es, fr, it, ja, ko, pt, ru, zh | real-time and general use. Start here. |
 | `chevechette` | recommended | de, en, fr, it, ja, ko, pt, ru, zh | narration, non real-time, and batch. |
 | `linotte` | recommended | de, en, fr, it, ja, ko, pt, ru, zh | narration, non real-time, and batch. |
-| `lyre` | experimental | n/a | early adopters only. |
-| `hulotte-lb-preview` | experimental | lb (Luxembourgish), de, en, es, it, ja, ko, pt, ru, zh. `fr` and a request with no language use automatic language detection from the text. | early adopters only. Luxembourgish first. |
+| `lyre` | experimental | none listed | early adopters only. |
+| `hulotte-lb-preview` | experimental | lb (Luxembourgish), de, en, es, it, ja, ko, pt, ru, zh | early adopters only. Luxembourgish first. |
+
+`hulotte-lb-preview` detects the language from the text when `lang` is `fr` or when
+the request has no language.
+
+A model can be outside its service hours or still starting. A synth call to it
+returns 503 with a `Retry-After` header (see `synth.md`).
 
 ### Luxembourgish
 

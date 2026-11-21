@@ -1,6 +1,6 @@
 ---
 name: frugale-tts-formats
-description: Pick a voice model and an audio format for frugale TTS synthesis (wav, mp3, opus, opus_raw, pcm; models discovered live via /v1/models). Use when choosing model or response_format for a synth call.
+description: Pick a voice model and an audio format for frugale TTS synthesis. The formats are wav, mp3, opus, opus_raw, and pcm. Read the models live from /v1/models. Use when choosing model or response_format for a synth call.
 ---
 
 <!-- PUBLIC: distributable to customers. Soft index. The runbook carries the requests. -->
@@ -17,4 +17,7 @@ pick.
 
 Set the chosen values in the synth body (`frugale-tts-synth`).
 
-Prerequisite: the synth setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md` (a `consumer` bearer).
+A model can be outside its service hours or still starting. A synth call to it
+returns 503 with a `Retry-After` header.
+
+Prerequisite: the synth setup in `https://github.com/tomheno/frugale-voice-gateway-skills/blob/main/README.md` (a `consumer` key).

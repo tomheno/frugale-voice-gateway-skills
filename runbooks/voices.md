@@ -6,19 +6,19 @@ Add and manage voices. Voice-CRUD needs your `customer_admin` key. A `consumer`
 key can NOT add voices (it returns 403).
 
 Set your shell (see `../README.md`): `SYNTH`, `KEY` (your `customer_admin`
-bearer).
+key).
 
 ## Add a voice
 
 Send a reference wav. Always send its EXACT transcript too. The transcript is
 optional, but an exact one gives the best result. The reply carries the voice `uid`.
 
-The reference clip MUST be 12 seconds or less. The gateway checks this at
+The reference clip MUST be 15.5 seconds or less. The gateway checks this at
 enrollment and rejects a longer clip with HTTP 400. The audio MUST be at most
 10 MiB (the JSON base64 form counts the base64 text). The transcript MUST be
 exactly the words spoken in the clip. A longer clip breaks sync between the audio
 and the text. Synth then speaks the leftover reference words BEFORE your target
-text. Trim the clip to a clean pause under 12 seconds. Match the transcript to it.
+text. Trim the clip to a clean pause under 15.5 seconds. Match the transcript to it.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
@@ -32,7 +32,7 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 
 Send `consent_to_backend_mirror=true` to allow a copy of the reference clip on the
 servers that run synthesis. Without it, synthesis with this voice can fail. The
-optional `identifier` field is echoed back. The reply carries the voice `uid`.
+optional `identifier` field comes back in the reply. The reply carries the voice `uid`.
 Use that `uid` as the `voice` field at synth. A voice created through the gateway
 is already `ready`.
 
@@ -60,10 +60,10 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -H "Authorization: Bearer $KEY" -X DELETE "$SYNTH/v1/voices/<uid>"
 ```
 
-## Confirm a legacy draft, check existence
+## Legacy draft and existence
 
-Confirm applies only to a legacy draft. A voice created through the gateway is
-already `ready`.
+`confirm` applies only to a legacy draft. A voice created through the gateway is
+already `ready`. A `confirm` on a voice that is not a draft returns 409.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \

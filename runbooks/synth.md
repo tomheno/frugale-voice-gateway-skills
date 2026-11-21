@@ -5,12 +5,12 @@
 Turn text into audio. Use a `consumer` key. Synthesize one text (`/v1/audio/speech`)
 or up to 16 texts in one call (`/v1/audio/speech/batch`).
 
-Set your shell (see `../README.md`): `SYNTH`, `KEY` (a `consumer` bearer),
+Set your shell (see `../README.md`): `SYNTH`, `KEY` (a `consumer` key),
 `VOICE` (a voice `uid` from `voices.md`, or `default`).
 
 ## One text
 
-The endpoint is OpenAI-compatible. Set `model` and `response_format` from
+The route is drop-in compatible. Set `model` and `response_format` from
 `models-and-formats.md`. This example uses `wav`, which plays directly.
 
 ```bash
@@ -28,10 +28,14 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 |---|---|---|
 | `input` | string | the text. Alias `text`. |
 | `voice` | string | a voice `uid`, or `default`. Alias `voice_id`. |
-| `model` | string | a model alias (see `models-and-formats.md`). Omit -> the default. An unknown alias -> 422. |
+| `model` | string | a model alias (see `models-and-formats.md`). Omit it to use the default model. An unknown alias returns 400. |
 | `response_format` | string | `wav` / `mp3` / `opus` / `opus_raw` / `pcm` (see `models-and-formats.md`). |
 | `lang` | string | ISO 639-1 (for example `fr`). Alias `languages`. |
 | `timestamp_granularities` | array | Set `["word"]` for word timestamps (see below). Omit for plain audio. |
+
+A voice id that does not exist returns 404 `voice_not_found`. Create the voice,
+or use a voice id that `GET /v1/voices` lists. A deleted voice returns 410. The
+`detail` of that answer starts with `voice_tombstoned`.
 
 ## Word timestamps (opt-in)
 
@@ -51,7 +55,7 @@ response is plain audio (unchanged).
 
 The clip MUST be 30 minutes (1800 seconds) or less. A clip over the limit
 returns HTTP 400. Word timestamps are
-not available on the streaming endpoints. In a batch, set
+not available on the streaming routes. In a batch, set
 `timestamp_granularities: ["word"]` at the top level. Each result then carries
 `words` AND `audio_duration`. A failed batch item carries `error`. A succeeded
 item whose alignment fails keeps its audio and `audio_duration`, omits `words`,
@@ -64,6 +68,10 @@ Send up to 16 texts in one call. Run the single-synth call ONCE first. After a l
 idle, a batch returns HTTP 200 with every item failed. `--retry` does not retry a
 200, so that batch writes an all-failed file.
 
+An item with a voice id that does not exist fails on its own with `error.type`
+`voice_not_found`. The call still returns 200, and the other items are not
+affected.
+
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
@@ -75,11 +83,24 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 
 The reply is JSON: `{id, total, succeeded, failed, results}`. Each result carries
 `index`, `status`, `audio_data` (base64), and `media_type`. Decode `audio_data`
-to get the audio bytes. For `opus_raw`, see `opus-raw-decode.md`.
+to get the audio bytes. For `opus_raw`, see `opus-raw-decode.md`. A failed result
+has no audio. It carries `error`, an object with `message` and `type`.
+
+## When a model is not available
+
+A model can be outside its service hours or still starting.
+
+- `POST /v1/audio/speech` returns 503. The `detail` is `deployment_stopped`,
+  `deployment_starting`, or `deployment_stopping`. The `Retry-After` header gives
+  the seconds to wait. Wait that long, then retry.
+- A batch returns 200. Each item for that model fails, and the code is in
+  `error.type` and `error.message`. The batch has no `Retry-After` header. Wait,
+  then retry the failed items. A single call to the same model gives the wait
+  in `Retry-After`.
 
 ## See also
 
 - `models-and-formats.md`: pick a model + a format.
 - `opus-raw-decode.md`: decode the compact batch format.
-- `streaming.md`: stream audio as it renders, and the latency guide: which path
+- `streaming.md`: stream audio as it renders, and the latency guide: which door
   gives the first audio fastest, and how to tune a WebSocket client.

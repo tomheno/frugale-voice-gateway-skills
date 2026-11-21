@@ -32,8 +32,9 @@ Any libopus binding decodes the container, in any language. The steps:
 2. Loop the frames. Read a u16 `packet_len`, then read that many bytes. Those
    bytes are one libopus packet.
 3. Feed each packet to an Opus decoder at the header `sample_rate` and `channels`.
-4. Concatenate the decoded PCM. Drop `pre_skip * sample_rate / 48000` samples
-   from the front (`pre_skip` is in 48000 Hz units). Wrap the PCM in a WAV header to play it.
+4. Concatenate the decoded PCM. `pre_skip` is in 48000 Hz units. Convert it to the
+   header rate before you trim: drop `pre_skip * sample_rate / 48000` samples
+   from the front. Wrap the PCM in a WAV header to play it.
 
 A packet length is at most 4000 bytes. Guard a short or empty body, a
 zero-length packet, a packet over 4000 bytes, and a channel count other than 1.

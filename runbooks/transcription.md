@@ -171,7 +171,7 @@ An event can arrive in more than one network chunk. Keep the text after the last
 
 ## Custom vocabulary
 
-Add `hotwords` to the URL to give the service the names and terms that it must write correctly, for example a brand: `?hotwords=Acme,Kirchberg`.
+Add the `hotwords` query parameter to give the service names and terms that it must write correctly, for example a brand: `?hotwords=Acme,Kirchberg`.
 Separate the terms with commas, or repeat the parameter. Each term has 1 to 50 characters: letters, digits, space, `'`, `.`, `&`,
 `+`, `-`. Encode `+` as `%2B` and `&` as `%26`. Send at most 50 terms. A term outside these rules returns 400 `invalid_request`.
 
@@ -185,15 +185,15 @@ The `hotwords` parameter works with `"stream": true` too.
 
 ## Limits
 
-- At most 600 calls a minute per key. The count is per location of the caller,
-  so a key that calls from more than one location can get more than 600 calls
-  through in total. Plan for 600. Above the limit: 429 `rate_limited`. Wait the
-  `Retry-After` seconds.
+- At most 600 calls a minute per key. The service counts the calls of a key
+  separately for each caller location. A key that calls from more than one
+  location can send more than 600 calls in total. Plan for 600. Above the limit:
+  429 `rate_limited`. Wait the `Retry-After` seconds.
 - `max_tokens` at most 2048. A clip longer than about 200 seconds needs more:
   split it into parts.
 - The body is JSON in UTF-8. Send `Content-Type: application/json`. Do not
   compress the body.
-- The audio is a WAV `data:` URL. Do not send a web URL.
+- The audio is a WAV `data:` URL. Send the audio itself, not a link to it.
 
 ## Errors
 
@@ -201,7 +201,7 @@ Every error is `{"detail": "<code>"}`.
 
 | status | code | next step |
 |---|---|---|
-| 400 | `invalid_request` | The body breaks a rule: no audio part, no `max_tokens`, `max_tokens` above 2048, a field outside the request schema (for example `model` or `n`), or not UTF-8 JSON. A `hotwords` term outside the rules. Fix the request. |
+| 400 | `invalid_request` | The body breaks a rule: no audio part, no `max_tokens`, `max_tokens` above 2048, or a field outside the request schema (`model` or `n`). The body is not UTF-8 JSON, or a `hotwords` term breaks the rules. Fix the request. |
 | 400 | `bad_request` | The service refused the request. Check the message shape. |
 | 401 | `unauthorized` | Use a valid, unexpired `consumer` key. |
 | 413 | `body_too_large` | Send a shorter clip. |
