@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frugale Voice Gateway API
-  version: 0.13.0
+  version: 0.13.1
   description: |
     Drop-in compatible text-to-speech HTTP API. It covers speech synthesis, batch
     synthesis, voice management, the model alias list, and the proxy-key
@@ -535,7 +535,8 @@ paths:
       description: |
         The response shows the `bearer` once. Store it at once. Omitted
         `expires_at` gives 90 days. A customer_admin key can set at most 90 days.
-        An `expires_at` in the past gives 400.
+        An `expires_at` in the past gives 400. An `expires_at` above
+        99999999999999 gives 400 `expires_at_out_of_range`.
 
         A customer_admin key can mint only consumer keys for its own customer_id.
 
@@ -577,6 +578,7 @@ paths:
               examples:
                 invalid_customer_id: {value: {detail: invalid_customer_id}}
                 invalid_expires_at: {value: {detail: invalid_expires_at}}
+                expires_at_out_of_range: {value: {detail: expires_at_out_of_range}}
                 malformed_bearer: {value: {detail: malformed_bearer}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/AdminForbidden'}
@@ -593,8 +595,11 @@ paths:
       description: |
         Returns a successor key. The default `grace_secs` is 0: the gateway
         revokes the old key at once. The gateway lowers a customer_admin value
-        above 300 to 300. The successor gets a fresh 90-day expiry and keeps the
-        same tier, customer_id, and role.
+        above 300 to 300. The gateway also limits the grace to the time that the
+        old key has left. The old key stops at the end of the grace window,
+        within about 10 seconds, also after a restart of the gateway. The
+        successor gets a fresh 90-day expiry and keeps the same tier,
+        customer_id, and role.
 
         A customer_admin cannot manage customer_admin keys.
 

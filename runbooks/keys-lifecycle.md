@@ -34,8 +34,10 @@ then mint again.
 Rotate by `kid`. You do NOT need the old key. The default `grace_secs` is 0:
 the gateway revokes the old key at once. Set `grace_secs` to keep the old key
 alive for that window, so you replace it with no downtime. The gateway lowers a
-`customer_admin` `grace_secs` above 300 to 300. If a key leaks, rotate it with
-`grace_secs` 0 or revoke it.
+`customer_admin` `grace_secs` above 300 to 300. The gateway also limits the
+grace to the time that the old key has left. The old key stops at the end of the
+window, within about 10 seconds, also after a restart of the gateway. If a key
+leaks, rotate it with `grace_secs` 0 or revoke it.
 
 ```bash
 curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
@@ -88,6 +90,7 @@ revoked flag), `next_cursor`, and `total_estimate`.
 
 - A consumer key that you mint lives at most 90 days.
 - The gateway lowers a `customer_admin` `grace_secs` above 300 to 300.
+- A mint with an `expires_at` above 99999999999999 gives 400 `expires_at_out_of_range`.
 - A customer holds at most 1000 active consumer keys by default.
 
 ## See also
