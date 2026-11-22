@@ -1207,7 +1207,7 @@ components:
     ModelsList:
       type: object
       required: [object, data]
-      example: {"object":"list","data":[{"id":"hulotte","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"chevechette","object":"model","owned_by":"frugale","description":"Model alias."}]}
+      example: {"object":"list","data":[{"id":"hulotte","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"chevechette","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"linotte","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"lyre","object":"model","owned_by":"frugale","description":"Model alias."}]}
       properties:
         object: {type: string, const: list}
         data:
@@ -1235,7 +1235,7 @@ components:
     ValidationErrorDetail:
       type: object
       required: [detail]
-      example: {"detail":[{"type":"string_too_short","loc":["body","input"],"msg":"String should have at least 1 character","ctx":{"min_length":1}}]}
+      example: {"detail":[{"type":"missing","loc":["body","input"],"msg":"missing field `input`"}]}
       properties:
         detail:
           type: array
