@@ -1,10 +1,13 @@
 asyncapi: 3.0.0
 info:
   title: Frugale Voice Gateway Streaming API
-  version: 0.13.1
+  version: 0.17.0
   description: |
-    Two WebSocket doors for streaming speech synthesis. The HTTP API is in the
-    companion `openapi.yaml`.
+    WebSocket doors for streaming speech synthesis and live speech-to-text.
+    Synthesis: the stream door and the realtime door. Speech-to-text: the
+    speech-to-text stream door, and the transcription mode of the realtime
+    door (`?intent=transcription`). The HTTP API, with the transcription of a
+    whole file, is in the companion `openapi.yaml`.
 servers:
   primary:
     host: api-otem.confidential-intelligence.com
@@ -158,6 +161,13 @@ channels:
       arrive. Idle limit 60 s. Session limit 600 s. The server sends a ping every
       20 s. Audio is PCM16 at 24000 Hz, always, base64 inside JSON.
 
+      Query. The door reads one query key, `intent`. The value
+      `intent=transcription` opens the speech-to-text mode of this door (the
+      channel `realtimeTranscription`). It never opens a TTS session, and the
+      TTS frames below do not apply to it. No `intent` key, or any other value,
+      gives the TTS door. A query that holds the `intent` key more than once
+      gets HTTP 403 with an `application/problem+json` body before the upgrade.
+
       Flow: the server sends `session.created` first. The first client frame must
       be `session.update`, within 15 s. Any other first frame closes the connection
       with 1008. `session.update` takes two shapes, and neither is strictly
@@ -203,6 +213,206 @@ channels:
       legacyAudioDoneEvent: {$ref: '#/components/messages/ResponseAudioDone'}
       responseDone: {$ref: '#/components/messages/ResponseDone'}
       realtimeError: {$ref: '#/components/messages/RealtimeError'}
+  speechToText:
+    address: /v1/speech-to-text/realtime
+    title: Speech-to-text stream door
+    description: |
+      Live speech-to-text. Send audio chunks, receive partial and final text.
+
+      Auth. Upgrade with HTTP GET and one of two headers: `Authorization:
+      Bearer <token>`, or `xi-api-key: <proxy key>`. When both come,
+      `Authorization` wins. The gateway checks the key BEFORE the upgrade. A bad
+      key gives HTTP 401 with no WebSocket close. If the policy engine cannot
+      decide, the gateway answers HTTP 503 with `Retry-After: 1` and does not
+      upgrade.
+
+      Query. `model_id` is required: a speech-to-text id of `GET /v1/models`
+      (description `Speech-to-text model.`). The other keys set the session,
+      and `session_started.config` echoes the values in use. The query
+      schema of this channel lists the keys and their values. The main keys:
+
+      - `audio_format`: the format of the audio that you send. Default
+        `pcm_16000`. Raw 16-bit little-endian PCM, mono, at the rate in the
+        name, or 8000 Hz mu-law.
+      - `language_code`: the language of the speech, an ISO 639 code (`fr`,
+        `fr-FR`, `lb`). With no value, or `auto`, the service transcribes
+        Luxembourgish: it does not detect the language. Set it on every
+        session. `omni-asr` takes any valid tag.
+      - `commit_strategy`: `manual` (the default: you commit) or `vad` (the
+        server commits at each pause). With `vad`, `vad_threshold`,
+        `vad_silence_threshold_secs` and `min_speech_duration_ms` tune the
+        pause detection.
+      - `include_timestamps`: `true` adds the words and their times.
+      - `keyterms`: custom vocabulary, the same rules as the `hotwords` of the
+        transcription route (comma-separated or repeated, currently at most 50
+        terms of 1 to 50 characters). `omni-asr` only.
+
+      A key value that the service refuses gives one `invalid_request` event,
+      then the close 1008.
+
+      Flow. The server sends `session_started` first. Then send
+      `input_audio_chunk` messages: base64 audio in `audio_base_64`, the rate
+      of `audio_format` in `sample_rate`, and `commit`. Send short chunks:
+      currently at most 1 second of audio in one chunk. Set `commit: true` on
+      the last chunk of a segment (with `commit_strategy=manual`). Each commit
+      sends the segment to transcription: the server sends
+      `partial_transcript` events with the text so far, then one
+      `committed_transcript`. With `include_timestamps=true`, it also sends
+      `committed_transcript_with_timestamps`, with the words and their times
+      from the start of the session. A segment that gets too long is
+      committed for you, with a `warning` event. A frame of an unknown type
+      does not reach you: ignore a `message_type` that you do not know.
+
+      Limits: frame cap 10 MiB. The server sends a ping every 20 s. A session
+      with no message from you closes with 1008 and the reason `idle timeout`:
+      currently after 15 seconds while no commit is in work. A session has a
+      time limit of currently less than 10 minutes: at the limit the server
+      sends `session_time_limit_exceeded` and closes with 1008. Open a new
+      session to go on.
+
+      Errors. An error event has a `message_type` from the list of the
+      ErrorEvent message, and a fixed text in `error`. The text is for people:
+      test the `message_type`.
+
+      Unknown model. A missing or unknown `model_id` gives one `invalid_request`
+      event, then the close 1008. `flash-asr` and `light-asr` are listed but
+      not yet available: they also give `invalid_request`, then the close 1008.
+
+      Model not available. A model can be outside its service hours or still
+      starting. A new session on that model closes with code 1013. The close
+      reason is `deployment_stopped`, `deployment_starting`, or
+      `deployment_stopping`. A close has no `Retry-After` value. Wait, then open
+      a new session. The first sessions after the service hours start can also
+      close with 1013 for a short time: reconnect after a few seconds.
+
+      Close codes: 1000 normal. 1001 going away (the server restarts, with the
+      reason `server draining`). 1008 client fault (unknown model, a refused
+      query value, no message in time, session time limit). 1009 a message is
+      too big. 1011 internal fault. 1013 the
+      service cannot take the session now, so try again in a few seconds. 1006
+      means that the connection dropped with no close code.
+    bindings:
+      ws:
+        query: {$ref: '#/components/schemas/SttQuery'}
+    messages:
+      inputAudioChunk: {$ref: '#/components/messages/SttInputAudioChunk'}
+      sessionStarted: {$ref: '#/components/messages/SttSessionStarted'}
+      partialTranscript: {$ref: '#/components/messages/SttPartialTranscript'}
+      committedTranscript: {$ref: '#/components/messages/SttCommittedTranscript'}
+      committedTranscriptWithTimestamps: {$ref: '#/components/messages/SttCommittedTranscriptWithTimestamps'}
+      warning: {$ref: '#/components/messages/SttWarning'}
+      error: {$ref: '#/components/messages/SttError'}
+  realtimeTranscription:
+    address: /v1/realtime
+    title: Realtime door, transcription mode
+    description: |
+      Live speech-to-text on the realtime door. Open `/v1/realtime` with the
+      query `intent=transcription`. The value must be exactly
+      `transcription`: any other value opens the TTS session of the realtime
+      door. A query that holds the `intent` key more than once gets HTTP 403
+      with an `application/problem+json` body before the upgrade.
+
+      Auth. Upgrade with HTTP GET and `Authorization: Bearer <token>`. The
+      gateway checks the token BEFORE the upgrade. A bad token gives HTTP 401
+      with no WebSocket close. If the policy engine cannot decide, the gateway
+      answers HTTP 503 with `Retry-After: 1` and does not upgrade.
+
+      Limits: frame cap 10 MiB. The first `session.update` must arrive within 15 s after
+      the server accepts the session. The server sends a ping every 20 s. A
+      session with no event from you closes with 1008: currently after 15
+      seconds while no commit is in work. A session has a time limit of
+      currently less than 10 minutes: at the limit the server sends the
+      `error` event `session_time_limit_exceeded` and closes with 1008. Open
+      a new session to go on.
+
+      Flow. The server sends `session.created` first. Send `session.update`
+      with `session.audio.input.transcription.model` set to a speech-to-text id
+      of `GET /v1/models` (description `Speech-to-text model.`). There is no
+      default model. A first `session.update` with no model, or with a model
+      that is not a speech-to-text id, gets the `error` event `invalid_value`
+      (param `session.audio.input.transcription.model`). Send a new
+      `session.update` with a valid model. The server answers
+      `session.updated`. The `session.update` of this mode:
+
+      - `session.type` is `transcription`, in every `session.update`.
+      - `session.audio.input.format` is `{"type": "audio/pcm", "rate": 24000}`
+        (the default) or `16000`.
+      - `session.audio.input.transcription.language` is the language of the
+        speech, an ISO 639 code (`fr`, `fr-FR`, `lb`). With no language, the
+        service transcribes Luxembourgish: it does not detect the language.
+        Set it.
+      - `session.audio.input.transcription.keywords` is an optional custom
+        vocabulary (an array of terms, the rules of the `hotwords` of the
+        transcription route). `omni-asr` only.
+      - `session.audio.input.turn_detection` is `null` (the default: you
+        commit with `input_audio_buffer.commit`) or `{"type": "server_vad"}`
+        (the server commits at each pause). `threshold`,
+        `silence_duration_ms` and `prefix_padding_ms` tune the pause
+        detection. Another type gives `unsupported_turn_detection` or
+        `invalid_value`.
+
+      A value that the service refuses gives an `error` event, and the whole
+      `session.update` does not apply. After the model is set, a
+      `session.update` that changes the config gets `session_config_locked`.
+      To change the config, open a new session.
+
+      Then send audio with `input_audio_buffer.append`: base64 PCM16
+      little-endian, mono, at the session rate. With `turn_detection` `null`,
+      send `input_audio_buffer.commit` at the end of each segment.
+      `input_audio_buffer.clear` drops the audio that is not committed. The
+      server sends
+      `conversation.item.input_audio_transcription.delta` events with the next
+      part of the text, and one
+      `conversation.item.input_audio_transcription.completed` for each item,
+      with the full `transcript`. A failed item gets
+      `conversation.item.input_audio_transcription.failed`. An event of an
+      unknown type does not reach you: ignore a type that you do not know.
+
+      Errors. An `error` event has `error.type` (`invalid_request_error`,
+      `server_error` or `transcription_error`), a stable `error.code`, a text
+      in `error.message`, and the field at fault in `error.param`, or null.
+      The text is for people: test the code. A client fault echoes your
+      `event_id` in `error.event_id`.
+
+      Model not available. A model can be outside its service hours or still
+      starting. After a `session.update` that names that model, the session
+      closes with code 1013. The close reason is `deployment_stopped`,
+      `deployment_starting`, or `deployment_stopping`. A close has no
+      `Retry-After` value. Wait, then open a new session. The first sessions
+      after the service hours start can also close with 1013 for a short time:
+      reconnect after a few seconds. `flash-asr` and `light-asr` are listed
+      but not yet available.
+
+      Close codes: 1000 normal. 1001 going away (the server restarts, with the
+      reason `server draining`). 1008 client fault (no `session.update` before
+      the deadline, no event in time, session time limit). 1011 internal fault. 1013 the service
+      cannot take the session now, so try again in a few seconds. 1006 means
+      that the connection dropped with no close code.
+    bindings:
+      ws:
+        query:
+          type: object
+          required: [intent]
+          properties:
+            intent:
+              type: string
+              const: transcription
+              description: Opens the transcription mode.
+    messages:
+      sessionUpdate: {$ref: '#/components/messages/SttSessionUpdate'}
+      inputAudioBufferAppend: {$ref: '#/components/messages/InputAudioBufferAppend'}
+      inputAudioBufferCommit: {$ref: '#/components/messages/InputAudioBufferCommit'}
+      inputAudioBufferClear: {$ref: '#/components/messages/InputAudioBufferClear'}
+      sessionCreated: {$ref: '#/components/messages/SttSessionCreated'}
+      sessionUpdated: {$ref: '#/components/messages/SttSessionUpdated'}
+      speechStarted: {$ref: '#/components/messages/InputAudioBufferSpeechStarted'}
+      speechStopped: {$ref: '#/components/messages/InputAudioBufferSpeechStopped'}
+      committed: {$ref: '#/components/messages/InputAudioBufferCommitted'}
+      cleared: {$ref: '#/components/messages/InputAudioBufferCleared'}
+      transcriptionDelta: {$ref: '#/components/messages/TranscriptionDelta'}
+      transcriptionCompleted: {$ref: '#/components/messages/TranscriptionCompleted'}
+      transcriptionFailed: {$ref: '#/components/messages/TranscriptionFailed'}
+      error: {$ref: '#/components/messages/SttRealtimeError'}
 operations:
   speechStreamSend:
     action: send
@@ -247,6 +457,47 @@ operations:
       - $ref: '#/channels/realtime/messages/legacyAudioDoneEvent'
       - $ref: '#/channels/realtime/messages/responseDone'
       - $ref: '#/channels/realtime/messages/realtimeError'
+  speechToTextSend:
+    action: send
+    title: Client messages on the speech-to-text stream door
+    channel: {$ref: '#/channels/speechToText'}
+    messages:
+      - $ref: '#/channels/speechToText/messages/inputAudioChunk'
+  speechToTextReceive:
+    action: receive
+    title: Server events on the speech-to-text stream door
+    channel: {$ref: '#/channels/speechToText'}
+    messages:
+      - $ref: '#/channels/speechToText/messages/sessionStarted'
+      - $ref: '#/channels/speechToText/messages/partialTranscript'
+      - $ref: '#/channels/speechToText/messages/committedTranscript'
+      - $ref: '#/channels/speechToText/messages/committedTranscriptWithTimestamps'
+      - $ref: '#/channels/speechToText/messages/warning'
+      - $ref: '#/channels/speechToText/messages/error'
+  realtimeTranscriptionSend:
+    action: send
+    title: Client events on the realtime door, transcription mode
+    channel: {$ref: '#/channels/realtimeTranscription'}
+    messages:
+      - $ref: '#/channels/realtimeTranscription/messages/sessionUpdate'
+      - $ref: '#/channels/realtimeTranscription/messages/inputAudioBufferAppend'
+      - $ref: '#/channels/realtimeTranscription/messages/inputAudioBufferCommit'
+      - $ref: '#/channels/realtimeTranscription/messages/inputAudioBufferClear'
+  realtimeTranscriptionReceive:
+    action: receive
+    title: Server events on the realtime door, transcription mode
+    channel: {$ref: '#/channels/realtimeTranscription'}
+    messages:
+      - $ref: '#/channels/realtimeTranscription/messages/sessionCreated'
+      - $ref: '#/channels/realtimeTranscription/messages/sessionUpdated'
+      - $ref: '#/channels/realtimeTranscription/messages/speechStarted'
+      - $ref: '#/channels/realtimeTranscription/messages/speechStopped'
+      - $ref: '#/channels/realtimeTranscription/messages/committed'
+      - $ref: '#/channels/realtimeTranscription/messages/cleared'
+      - $ref: '#/channels/realtimeTranscription/messages/transcriptionDelta'
+      - $ref: '#/channels/realtimeTranscription/messages/transcriptionCompleted'
+      - $ref: '#/channels/realtimeTranscription/messages/transcriptionFailed'
+      - $ref: '#/channels/realtimeTranscription/messages/error'
 components:
   messages:
     SessionConfig:
@@ -367,6 +618,111 @@ components:
       summary: Error event.
       contentType: application/json
       payload: {$ref: '#/components/schemas/RealtimeErrorPayload'}
+    SttInputAudioChunk:
+      name: input_audio_chunk
+      summary: One chunk of audio. `commit` true ends the segment.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttInputAudioChunkPayload'}
+    SttSessionStarted:
+      name: session_started
+      summary: First server event. Echoes the session config in use.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttSessionStartedPayload'}
+    SttPartialTranscript:
+      name: partial_transcript
+      summary: The text so far of the segment in work. A later event replaces it.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttTextPayload'}
+    SttCommittedTranscript:
+      name: committed_transcript
+      summary: The final text of one committed segment.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttTextPayload'}
+    SttCommittedTranscriptWithTimestamps:
+      name: committed_transcript_with_timestamps
+      summary: The final text of one committed segment, with the words and their times. Sent with `include_timestamps=true`.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttTimestampsPayload'}
+    SttWarning:
+      name: warning
+      summary: A segment reached the maximum length, and the server committed it.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttWarningPayload'}
+    SttError:
+      name: error event
+      summary: An error. The `message_type` is the code.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttErrorPayload'}
+    SttSessionUpdate:
+      name: session.update
+      summary: Sets the model, the audio format, the language, the vocabulary, and the commit mode. Send it first.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttSessionUpdatePayload'}
+    InputAudioBufferAppend:
+      name: input_audio_buffer.append
+      summary: Adds base64 PCM16 audio at the session rate.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/InputAudioBufferAppendPayload'}
+    InputAudioBufferCommit:
+      name: input_audio_buffer.commit
+      summary: Ends the segment and sends it to transcription.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttClientEvent'}
+    InputAudioBufferClear:
+      name: input_audio_buffer.clear
+      summary: Drops the audio that is not committed.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttClientEvent'}
+    SttSessionCreated:
+      name: session.created
+      summary: First server event of the transcription mode.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttSessionEventPayload'}
+    SttSessionUpdated:
+      name: session.updated
+      summary: The session config in use.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttSessionEventPayload'}
+    InputAudioBufferSpeechStarted:
+      name: input_audio_buffer.speech_started
+      summary: With server_vad. Speech started.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SpeechStartedPayload'}
+    InputAudioBufferSpeechStopped:
+      name: input_audio_buffer.speech_stopped
+      summary: With server_vad. Speech stopped.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SpeechStoppedPayload'}
+    InputAudioBufferCommitted:
+      name: input_audio_buffer.committed
+      summary: A segment is committed. Its text follows with the same `item_id`.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/CommittedPayload'}
+    InputAudioBufferCleared:
+      name: input_audio_buffer.cleared
+      summary: The audio that was not committed is dropped.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttClientEvent'}
+    TranscriptionDelta:
+      name: conversation.item.input_audio_transcription.delta
+      summary: The next part of the text of one item.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/TranscriptionDeltaPayload'}
+    TranscriptionCompleted:
+      name: conversation.item.input_audio_transcription.completed
+      summary: The final text of one item.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/TranscriptionCompletedPayload'}
+    TranscriptionFailed:
+      name: conversation.item.input_audio_transcription.failed
+      summary: The transcription of one item failed. The session stays open.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/TranscriptionFailedPayload'}
+    SttRealtimeError:
+      name: error
+      summary: Error event of the transcription mode.
+      contentType: application/json
+      payload: {$ref: '#/components/schemas/SttRealtimeErrorPayload'}
   schemas:
     SessionConfigPayload:
       type: object
@@ -616,3 +972,264 @@ components:
               examples: [voice_not_found, voice_tombstoned]
             message: {type: string}
             param: {type: [string, 'null']}
+    SttQuery:
+      type: object
+      required: [model_id]
+      description: The query of the speech-to-text stream door. A refused value gives one `invalid_request` event, then the close 1008.
+      properties:
+        model_id: {type: string, example: omni-asr, description: 'A speech-to-text id of `GET /v1/models`. Required.'}
+        audio_format:
+          type: string
+          enum: [pcm_8000, pcm_16000, pcm_22050, pcm_24000, pcm_44100, pcm_48000, ulaw_8000]
+          default: pcm_16000
+          description: 'The audio that you send: raw 16-bit little-endian PCM, mono, at the rate in the name, or 8000 Hz mu-law.'
+        language_code: {type: string, example: fr, description: 'ISO 639 code. With no value, or auto, the service transcribes Luxembourgish. Set it.'}
+        commit_strategy: {type: string, enum: [manual, vad], default: manual}
+        vad_threshold: {type: number, minimum: 0, maximum: 1, description: With commit_strategy vad. The speech threshold.}
+        vad_silence_threshold_secs: {type: number, minimum: 0.192, maximum: 3, description: With commit_strategy vad. The pause that ends a segment.}
+        min_speech_duration_ms: {type: integer, description: With commit_strategy vad. The shortest speech that counts.}
+        include_timestamps: {type: boolean, default: false, description: 'Adds committed_transcript_with_timestamps.'}
+        keyterms: {type: string, example: 'Acme,Kirchberg', description: 'Custom vocabulary, comma-separated or repeated. omni-asr only.'}
+        keepalive_interval_ms: {type: integer, minimum: 500, maximum: 10000, description: The server repeats the last partial_transcript at this interval.}
+    SttInputAudioChunkPayload:
+      type: object
+      required: [message_type, audio_base_64, commit, sample_rate]
+      properties:
+        message_type: {const: input_audio_chunk}
+        audio_base_64:
+          type: string
+          contentEncoding: base64
+          description: 'The audio in the format of `audio_format`. Currently at most 1 second of audio in one chunk. PCM needs an even byte count.'
+        commit: {type: boolean, description: True ends the segment and sends it to transcription.}
+        sample_rate: {type: integer, example: 16000, description: 'The rate of `audio_format`. Another value gives `input_error`.'}
+      example: {"message_type":"input_audio_chunk","audio_base_64":"AAAAAA==","commit":false,"sample_rate":16000}
+    SttSessionStartedPayload:
+      type: object
+      required: [message_type, session_id, config]
+      properties:
+        message_type: {const: session_started}
+        session_id: {type: string}
+        config:
+          type: object
+          description: The session config in use. `keyterms` is always an empty list in the echo.
+    SttTextPayload:
+      type: object
+      required: [message_type, text]
+      properties:
+        message_type: {type: string, enum: [partial_transcript, committed_transcript]}
+        text: {type: string}
+    SttTimestampsPayload:
+      type: object
+      required: [message_type, text, words]
+      properties:
+        message_type: {const: committed_transcript_with_timestamps}
+        text: {type: string}
+        words:
+          type: [array, 'null']
+          items:
+            type: object
+            required: [text, start, end, type]
+            properties:
+              text: {type: string}
+              start: {type: number, description: Seconds from the start of the session.}
+              end: {type: number, description: Seconds from the start of the session.}
+              type: {type: string, example: word}
+    SttWarningPayload:
+      type: object
+      required: [message_type, warning]
+      properties:
+        message_type: {const: warning}
+        warning: {type: string, example: segment reached the maximum length and was committed}
+    SttErrorPayload:
+      type: object
+      required: [message_type, error]
+      properties:
+        message_type:
+          type: string
+          description: |
+            The code. New codes can appear.
+
+            - `invalid_request`: an unknown or unavailable `model_id`, or a refused query value. The close 1008 follows.
+            - `input_error`: a message that does not parse, bad audio data, a binary frame, or a `sample_rate` that is not the `audio_format` rate. The session stays open.
+            - `chunk_size_exceeded`: an audio chunk is too large. Send shorter chunks.
+            - `insufficient_audio_activity`: a commit with no audio.
+            - `commit_throttled`: a commit while the last one is in work. Wait for its `committed_transcript`.
+            - `rate_limited`: too many messages a second. The message is dropped.
+            - `queue_overflow`, `resource_exhausted`: the service is at capacity or not ready. Reconnect after a few seconds.
+            - `transcriber_error`: the transcription of a segment failed.
+            - `session_time_limit_exceeded`: the session reached its time limit. The close 1008 follows.
+            - `error`: the server restarts. The close 1001 follows.
+          examples: [invalid_request, input_error, chunk_size_exceeded, insufficient_audio_activity, commit_throttled, transcriber_error]
+        error: {type: string, description: A fixed text for people. Test the message_type., example: commit with no audio}
+    SttClientEvent:
+      type: object
+      required: [type]
+      properties:
+        type: {type: string}
+        event_id: {type: string, description: 'Optional, at most 512 characters. A client fault echoes it in `error.event_id`.'}
+    InputAudioBufferAppendPayload:
+      type: object
+      required: [type, audio]
+      properties:
+        type: {const: input_audio_buffer.append}
+        event_id: {type: string}
+        audio:
+          type: string
+          contentEncoding: base64
+          description: 'PCM16 little-endian, mono, at the session rate (24000 Hz by default, or 16000 Hz). An even byte count.'
+    SttSessionUpdatePayload:
+      type: object
+      required: [type, session]
+      properties:
+        type: {const: session.update}
+        event_id: {type: string}
+        session:
+          type: object
+          required: [type]
+          properties:
+            type: {const: transcription}
+            audio:
+              type: object
+              properties:
+                input:
+                  type: object
+                  properties:
+                    format:
+                      type: object
+                      properties:
+                        type: {const: audio/pcm}
+                        rate: {type: integer, enum: [24000, 16000], default: 24000}
+                    transcription:
+                      type: object
+                      required: [model]
+                      properties:
+                        model: {type: string, example: omni-asr, description: 'A speech-to-text id of `GET /v1/models`. No default.'}
+                        language: {type: string, example: fr, description: 'ISO 639 code. With no language, the service transcribes Luxembourgish. Set it.'}
+                        keywords:
+                          type: array
+                          items: {type: string}
+                          description: 'Custom vocabulary. The rules of the hotwords of the transcription route. omni-asr only.'
+                    turn_detection:
+                      description: 'null (the default): you commit. server_vad: the server commits at each pause.'
+                      oneOf:
+                        - {type: 'null'}
+                        - type: object
+                          required: [type]
+                          properties:
+                            type: {const: server_vad}
+                            threshold: {type: number, minimum: 0, maximum: 1, default: 0.5}
+                            silence_duration_ms: {type: integer, default: 500}
+                            prefix_padding_ms: {type: integer, default: 300}
+      example: {"type":"session.update","session":{"type":"transcription","audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"transcription":{"model":"omni-asr","language":"fr"},"turn_detection":null}}}}
+    SttSessionEventPayload:
+      type: object
+      required: [type, event_id, session]
+      properties:
+        type: {type: string, enum: [session.created, session.updated]}
+        event_id: {type: string}
+        session:
+          type: object
+          properties:
+            id: {type: string}
+            object: {const: realtime.transcription_session}
+            type: {const: transcription}
+            expires_at: {type: integer, description: Unix seconds.}
+            audio: {type: object, description: 'The input config in use: format, transcription, turn_detection.'}
+    SpeechStartedPayload:
+      type: object
+      required: [type, audio_start_ms, item_id]
+      properties:
+        type: {const: input_audio_buffer.speech_started}
+        event_id: {type: string}
+        audio_start_ms: {type: integer}
+        item_id: {type: string}
+    SpeechStoppedPayload:
+      type: object
+      required: [type, audio_end_ms, item_id]
+      properties:
+        type: {const: input_audio_buffer.speech_stopped}
+        event_id: {type: string}
+        audio_end_ms: {type: integer}
+        item_id: {type: string}
+    CommittedPayload:
+      type: object
+      required: [type, item_id]
+      properties:
+        type: {const: input_audio_buffer.committed}
+        event_id: {type: string}
+        item_id: {type: string}
+        previous_item_id: {type: [string, 'null']}
+    TranscriptionDeltaPayload:
+      type: object
+      required: [type, item_id, content_index, delta]
+      properties:
+        type: {const: conversation.item.input_audio_transcription.delta}
+        event_id: {type: string}
+        item_id: {type: string}
+        content_index: {type: integer}
+        delta: {type: string, description: The next part of the text. Use the transcript of the completed event as the final text.}
+    TranscriptionCompletedPayload:
+      type: object
+      required: [type, item_id, content_index, transcript]
+      properties:
+        type: {const: conversation.item.input_audio_transcription.completed}
+        event_id: {type: string}
+        item_id: {type: string}
+        content_index: {type: integer}
+        transcript: {type: string}
+        usage:
+          type: object
+          properties:
+            type: {const: duration}
+            seconds: {type: number}
+      example: {"type":"conversation.item.input_audio_transcription.completed","event_id":"event_0123456789abcdef01234567","item_id":"item_001","content_index":0,"transcript":"Bonjour, ceci est un test.","usage":{"type":"duration","seconds":2.1}}
+    TranscriptionFailedPayload:
+      type: object
+      required: [type, item_id, content_index, error]
+      properties:
+        type: {const: conversation.item.input_audio_transcription.failed}
+        event_id: {type: string}
+        item_id: {type: string}
+        content_index: {type: integer}
+        error:
+          type: object
+          properties:
+            type: {const: transcription_error}
+            code: {type: string, enum: [transcription_failed, invalid_audio]}
+            message: {type: string}
+            param: {type: 'null'}
+    SttRealtimeErrorPayload:
+      type: object
+      required: [type, error]
+      properties:
+        type: {const: error}
+        event_id: {type: string}
+        error:
+          type: object
+          required: [type, code, message]
+          properties:
+            type: {type: string, enum: [invalid_request_error, server_error, transcription_error]}
+            code:
+              type: string
+              description: |
+                A stable code. New codes can appear.
+
+                - `invalid_value`: a refused value. `param` names the field, for example `session.audio.input.transcription.model` (no model, or not a speech-to-text id), `session.audio.input.transcription.language`, or `session.type`.
+                - `model_not_found`: an unknown model.
+                - `model_unavailable`: the model is listed but not yet available (`flash-asr`, `light-asr`). The session stays open: send a `session.update` with `omni-asr`.
+                - `session_not_configured`: audio before a `session.update` with a model.
+                - `session_config_locked`: a `session.update` that changes the config after the model is set.
+                - `unsupported_turn_detection`: a turn detection type that the service does not support.
+                - `invalid_event`: an unknown event type, a binary frame, or a frame that does not parse.
+                - `invalid_audio`: audio data that is not valid base64 PCM16.
+                - `audio_chunk_too_large`: one append is too large. Send shorter appends.
+                - `input_audio_buffer_commit_empty`: a commit with no audio.
+                - `commit_in_progress`: a commit while the last one is in work.
+                - `rate_limit_exceeded`: too many events a second.
+                - `session_time_limit_exceeded`: the session reached its time limit. The close 1008 follows.
+                - `server_draining`: the server restarts. The close 1001 follows.
+                - `service_unavailable`, `server_overloaded`, `server_error`, `transcription_failed`: a server fault.
+              examples: [invalid_value, model_unavailable, session_not_configured, input_audio_buffer_commit_empty]
+            message: {type: string, description: Text for people. Do not parse it.}
+            param: {type: [string, 'null']}
+            event_id: {type: [string, 'null'], description: Your event_id on a client fault.}

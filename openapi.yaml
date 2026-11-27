@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Frugale Voice Gateway API
-  version: 0.13.1
+  version: 0.17.0
   description: |
-    Drop-in compatible text-to-speech HTTP API. It covers speech synthesis, batch
-    synthesis, voice management, the model alias list, and the proxy-key
-    lifecycle. It also has a speech-to-text preview under `/v0` (tag
-    `transcription`).
+    Drop-in compatible text-to-speech and speech-to-text HTTP API. It covers
+    speech synthesis, batch synthesis, voice management, the model list,
+    transcription of an audio file (tag `transcription`), and the proxy-key
+    lifecycle.
 
     Every call sends `Authorization: Bearer <token>`. The token is a proxy key
     (role `consumer` or `customer_admin`) or a federated tenant JWT. Each
@@ -19,9 +19,11 @@ info:
     stable and machine-readable. A request that fails field validation returns
     422 with a list in `detail`. An unknown model alias returns 400 on the
     speech route, with the text `invalid input: unknown model: <alias>` in
-    `detail`.
+    `detail`. The transcription route has its own error shape:
+    `{"error": {"message", "type", "code", "param"}}` (see that route).
 
-    The companion `asyncapi.yaml` describes streaming over WebSocket.
+    The companion `asyncapi.yaml` describes streaming over WebSocket: speech
+    synthesis, and live speech-to-text.
 servers:
   - url: https://api-otem.confidential-intelligence.com
     description: Primary (EU)
@@ -38,10 +40,9 @@ tags:
     description: Model alias list.
   - name: transcription
     description: |
-      Speech-to-text preview. The `/v0` routes are a preview: a stable
-      `/v1` transcription route replaces them later. The request and the answer
-      use the chat-completions shape, with the audio as a base64 `data:`
-      URL inside the message.
+      Speech-to-text. `POST /v1/audio/transcriptions` transcribes one audio
+      file, as one answer or as a stream of text events. For live audio, use
+      the WebSocket doors of `asyncapi.yaml`.
   - name: proxy-keys
     description: |
       Proxy-key lifecycle. The admin host serves these routes, not the
@@ -391,8 +392,14 @@ paths:
       operationId: listModels
       summary: List model aliases
       description: |
-        Returns the model aliases served now. Read the list instead of hard-coding
-        values.
+        Returns the models served now. Read the list instead of hard-coding
+        values. An entry with the description `Model alias.` is a synth model:
+        pass its `id` as `model` to the synth routes. An entry with the
+        description `Speech-to-text model.` is a speech-to-text id: pass it as
+        `model` to `POST /v1/audio/transcriptions` and to the speech-to-text
+        WebSocket doors. Today the speech-to-text ids are `omni-asr`, `flash-asr`
+        and `light-asr`. `flash-asr` and `light-asr` are listed but not yet
+        available: a call answers 503 `model_unavailable`.
 
         Auth: consumer, customer_admin, or federated tenant JWT.
       responses:
@@ -404,126 +411,144 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
-  /v0/chat/completions:
+  /v1/audio/transcriptions:
     post:
       tags: [transcription]
-      operationId: transcribeChat
-      summary: Transcribe one audio clip (preview)
+      operationId: createTranscription
+      summary: Transcribe one audio file
       description: |
-        Transcribes one audio clip. Send the audio as a base64 WAV `data:` URL
-        in an `audio_url` part, and the instruction as a `text` part of the same
-        user message. The answer text is in `choices[0].message.content`.
+        Transcribes one audio file into text. Send the file as
+        `multipart/form-data`, the same shape as a common transcription API.
+        Read the text as JSON, plain text, subtitles, or a stream of
+        server-sent events.
 
-        Language. Set the spoken language with the `X-Language` header or the
-        `language` query parameter (the header wins). `lb` or `ltz` uses the
-        Luxembourgish route. With no language, the call uses the Luxembourgish route.
-        Any other value (for example `fr`, `de`, `en`) uses the multilingual
-        route. A regional tag such as `fr-FR` counts as its first part.
+        Auth: consumer, customer_admin, or federated tenant JWT.
 
-        Streaming. Set `stream` to `true` to get the text as server-sent events
-        (`text/event-stream`). Each event is `data: <chunk JSON>`. The last
-        event is `data: [DONE]`. If the service fails during the stream, the last
-        event is `data: {"detail":"upstream_error"}`, with no `[DONE]`. You send
-        the audio in full first. The transcription runbook has a stream example
-        with client code.
+        Model. Set `model` to a speech-to-text id of `GET /v1/models` (the
+        entries with the description `Speech-to-text model.`). Send `model` as
+        the `?model=` query parameter, or as a form part before `file`. When
+        you send both, they must be equal, else 400 `invalid_value` with
+        `param` `model`.
 
-        Output length. Set `max_tokens` to 10 per second of audio plus 32, at
-        most 2048. A clip longer than about 200 seconds needs more: split it.
+        | model | languages | state |
+        |---|---|---|
+        | `omni-asr` | any valid tag, for example `fr`, `de`, `en`, `lb` | available |
+        | `flash-asr` | `lb` | listed, not yet available: 503 `model_unavailable` |
+        | `light-asr` | `lb` | listed, not yet available: 503 `model_unavailable` |
 
-        Body rules. The body is JSON in UTF-8 (`Content-Type:
-        application/json`, no other charset, no `Content-Encoding`). It must
-        hold an audio part and `max_tokens`. `max_tokens` is at most 2048. Send only the fields of
-        the request schema. A body that breaks a rule returns 400 `invalid_request`.
+        Language. Set `language` to the language of the speech: an ISO 639
+        code, for example `fr`. A regional tag such as `fr-FR` counts as `fr`.
+        With no `language`, or with `auto`, the service transcribes
+        Luxembourgish: it does not detect the language. So set `language` on
+        every call. A language that the model does not take returns 400
+        `invalid_value` with `param` `language`, before any 503
+        `model_unavailable`. The `X-Language` header and the `?language=`
+        query parameter also set the language, and win over the form field.
 
-        Rate limit. At most 600 calls a minute per key. The service counts the
-        calls of a key separately for each caller location. A key that calls from
-        more than one location can send more than 600 calls in total. Plan for
-        600. Above the limit: 429 `rate_limited` with `Retry-After`.
+        Word timestamps. `omni-asr` gives word times in every language. Ask
+        for them with `response_format=verbose_json` and
+        `timestamp_granularities[]=word`: the answer has `words`, each with
+        `word`, `start` and `end` in seconds from the start of the audio.
+        `response_format=ssml` uses the word times too. `words` is absent when
+        the service finds no word times in the audio. A model with no word
+        times returns 400 `word_timestamps_unavailable`.
 
-        Auth: consumer key.
+        Custom vocabulary. Add the `hotwords` query parameter with names and
+        terms that the service must write correctly, for example
+        `?hotwords=Acme,Kirchberg`. Separate the terms with commas, or repeat
+        the parameter. Each term has 1 to 50 characters (letters, digits, space,
+        and `'` `.` `&` `+` `-`), with at least one letter or digit. Encode `+`
+        as `%2B` and `&` as `%26`. Currently at most 50 terms. A list that
+        breaks these rules returns 400 `invalid_value` with `param` `hotwords`.
+        Only `omni-asr` takes hotwords. Send them in the query: a form field
+        `hotwords` or `keywords` returns 400 `unsupported_parameter`.
+
+        Formats. `response_format` is `json` (the default), `text`, `srt`,
+        `vtt`, `verbose_json`, or `ssml`. `timestamp_granularities[]`
+        (`word`, `segment`) needs `verbose_json`. `stream=true` needs `json` or `text`.
+        `prompt` is not supported (400 `unsupported_parameter`). The service
+        ignores `temperature` and the fields that it does not know.
+
+        Streaming. With `stream=true`, the answer is `text/event-stream`. Each
+        event is one line `data: <JSON>` and a blank line. The events are
+        `transcript.text.delta` (the next part of the text, in `delta`),
+        `transcript.text.done` (the full text, in `text`), and `error`. The
+        stream has no `[DONE]` line: `transcript.text.done` or `error` ends it.
+        The text can come in one `delta` or in many. Use the `text` of
+        `transcript.text.done` as the final transcript. Ignore an event type
+        that you do not know.
+
+        Size. Currently the request body is at most 100000000 bytes (about 95
+        MiB). Above it: 413 `payload_too_large`. The limit can change. When a
+        large body has the `file` part first, the call can fail with 413
+        `model_must_precede_file`: send `?model=` or put `model` first.
+
+        Time. Currently a call that takes more than 290 seconds ends with 504
+        `request_timeout`. The limit can change.
+
+        Service hours. A speech-to-text model has service hours. Outside
+        them, the call returns 503 `deployment_stopped` with a `Retry-After`
+        header: the seconds until the next start. Around the start and the
+        stop of the service hours, the call returns 503 `deployment_starting`
+        or `deployment_stopping` with `Retry-After`. The first calls after the
+        service hours start can get a short 503 `backend_warming` with
+        `Retry-After`. Wait the `Retry-After` seconds,
+        then send the call again.
+
+        Errors. Every error of this route has the shape
+        `{"error": {"message", "type", "code", "param"}}`. `code` is the stable
+        value to test. `message` is text for people: do not parse it. `param`
+        names the field at fault, and is absent when no field is at fault.
       parameters:
-        - name: language
+        - name: model
           in: query
           required: false
-          schema: {type: string, example: fr}
-          description: Spoken language (ISO 639-1). The `X-Language` header wins over this parameter.
-        - name: X-Language
-          in: header
-          required: false
-          schema: {type: string, example: lb}
-          description: Spoken language (ISO 639-1).
+          schema: {type: string, example: omni-asr}
+          description: 'The speech-to-text id. Use it, or the `model` part of the form. When you send both, they must be equal.'
         - name: hotwords
           in: query
           required: false
           schema: {type: string, example: 'Acme,Kirchberg'}
-          description: 'Custom vocabulary: names and terms to spell right, comma-separated. The parameter can repeat. Each term has 1 to 50 characters (letters, digits, space, and the characters '' . & + -). Encode + as %2B and & as %26. At most 50 terms. Else 400 `invalid_request`.'
+          description: 'Custom vocabulary, comma-separated. The parameter can repeat. Each term has 1 to 50 characters (letters, digits, space, and the characters '' . & + -), with at least one letter or digit. Encode + as %2B and & as %26. Currently at most 50 terms. Else 400 `invalid_value`. `omni-asr` only.'
       requestBody:
         required: true
         content:
-          application/json:
-            schema: {$ref: '#/components/schemas/TranscriptionRequest'}
-            example:
-              messages:
-                - role: user
-                  content:
-                    - {type: text, text: 'Audio transcription. Output: transcript only.'}
-                    - type: audio_url
-                      audio_url: {url: 'data:audio/wav;base64,UklGRi...'}
-              max_tokens: 83
-              temperature: 0
+          multipart/form-data:
+            schema: {$ref: '#/components/schemas/TranscriptionForm'}
+            encoding:
+              file: {contentType: 'audio/*'}
       responses:
         '200':
-          description: The transcript. JSON, or server-sent events when `stream` is `true`.
+          description: The transcript, in the requested `response_format`.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/TranscriptionResponse'}
+              schema:
+                description: '`Transcription` for `json`, `TranscriptionVerbose` for `verbose_json`.'
+                anyOf:
+                  - {$ref: '#/components/schemas/Transcription'}
+                  - {$ref: '#/components/schemas/TranscriptionVerbose'}
+              examples:
+                json: {value: {text: 'Bonjour, ceci est un test de transcription.'}}
+            text/plain:
+              schema: {type: string, description: 'The text (`text`), or SubRip subtitles (`srt`).'}
+            text/vtt:
+              schema: {type: string, description: WebVTT subtitles.}
+            application/ssml+xml:
+              schema: {type: string, description: 'The text as SSML, built with the word times.'}
             text/event-stream:
               schema:
-                description: 'Each event is `data: ` plus one TranscriptionChunk as JSON. The last event is `data: [DONE]`.'
+                description: 'With `stream=true`. Each event is `data: ` plus one TranscriptionStreamEvent as JSON, then a blank line.'
                 allOf:
-                  - {$ref: '#/components/schemas/TranscriptionChunk'}
-        '400':
-          description: '`invalid_request`: the body breaks a body rule. `bad_request`: the request is not valid for the service.'
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ErrorDetail'}
-              example: {detail: invalid_request}
-        '401':
-          description: Missing, bad, expired, or revoked key, or a key that is not a consumer key.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ErrorDetail'}
-              example: {detail: unauthorized}
-        '413':
-          description: The body is too large.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ErrorDetail'}
-              example: {detail: body_too_large}
-        '429':
-          description: Rate limit reached. Wait the `Retry-After` seconds.
-          headers:
-            Retry-After:
-              schema: {type: integer}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ErrorDetail'}
-              example: {detail: rate_limited}
-        '502':
-          description: The service gave no valid answer. Retry.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ErrorDetail'}
-              example: {detail: upstream_error}
-        '503':
-          description: '`asr_unavailable`: the service is not ready, retry after `Retry-After` when present. `auth_unavailable`: the service cannot check the key now, retry.'
-          headers:
-            Retry-After:
-              schema: {type: integer}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ErrorDetail'}
-              example: {detail: asr_unavailable}
+                  - {$ref: '#/components/schemas/TranscriptionStreamEvent'}
+        '400': {$ref: '#/components/responses/AsrBadRequest'}
+        '401': {$ref: '#/components/responses/AsrUnauthorized'}
+        '403': {$ref: '#/components/responses/AsrForbidden'}
+        '404': {$ref: '#/components/responses/AsrModelNotFound'}
+        '413': {$ref: '#/components/responses/AsrPayloadTooLarge'}
+        '429': {$ref: '#/components/responses/AsrRateLimited'}
+        '500': {$ref: '#/components/responses/AsrInternalError'}
+        '503': {$ref: '#/components/responses/AsrUnavailable'}
+        '504': {$ref: '#/components/responses/AsrTimeout'}
   /admin/proxy-keys/mint:
     servers: &adminServers
       - url: https://admin-otem.confidential-intelligence.com
@@ -856,7 +881,8 @@ components:
 
         The policy engine answers 503 with the code `unavailable` and
         `Retry-After: 1` when it cannot decide a request. This answer can come
-        from every route in this file except `/v0`.
+        from every route in this file. On `POST /v1/audio/transcriptions` the
+        body has the error object shape, with the code `service_unavailable`.
       headers:
         Retry-After:
           description: Seconds to wait before the retry. The policy engine sends 1.
@@ -912,6 +938,136 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ValidationErrorDetail'}
           example: {detail: [{type: string_too_short, loc: [body, input], msg: String should have at least 1 character, ctx: {min_length: 1}}]}
+    AsrBadRequest:
+      description: |
+        The request breaks a rule. Fix the request, then send it again. `code`:
+
+        - `missing_model`: no `model` (param `model`).
+        - `invalid_value`: a value is not accepted. `param` names the field:
+          `model` (the value is too long), `language` (the model does not
+          support the language), or `hotwords` (too many, too long, or not
+          allowed terms).
+        - `invalid_multipart`: the body is not `multipart/form-data`.
+        - `invalid_audio`: the audio was refused (param `file`). For example the
+          file could not be decoded, or the audio is too long.
+        - `unsupported_response_format`: `response_format` is not one of `json`,
+          `text`, `srt`, `vtt`, `verbose_json`, `ssml`.
+        - `unsupported_timestamp_granularity`: `timestamp_granularities[]` is not
+          `word` or `segment`.
+        - `timestamp_granularities_require_verbose_json`: timestamps need
+          `response_format=verbose_json`.
+        - `word_timestamps_unavailable`: the model gives no word times
+          (`timestamp_granularities[]=word` or `response_format=ssml`), for
+          example `flash-asr` or `light-asr`. Use `omni-asr`, or another
+          format.
+        - `stream_requires_json_or_text`: `stream=true` needs
+          `response_format` `json` or `text`.
+        - `unsupported_parameter`: a field that the service does not support,
+          for example `prompt`.
+        - `invalid_request`: another request fault.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          examples:
+            language:
+              value: {error: {message: language is not supported for this model, type: invalid_request_error, code: invalid_value, param: language}}
+            missing_model:
+              value: {error: {message: model is required, type: invalid_request_error, code: missing_model, param: model}}
+    AsrUnauthorized:
+      description: 'No key, a bad, expired, or revoked key, or a malformed `Authorization` header. A malformed header gives 400 with the same body. Send a valid key.'
+      headers:
+        WWW-Authenticate:
+          schema: {type: string, example: Bearer}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          example: {error: {message: invalid or missing API key, type: authentication_error, code: invalid_api_key}}
+    AsrForbidden:
+      description: '`permission_denied`: the key is not allowed to use this route.'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          example: {error: {message: the API key is not allowed to use this route, type: authentication_error, code: permission_denied}}
+    AsrModelNotFound:
+      description: '`model_not_found` (param `model`): the value is not a speech-to-text id of this route. Read the ids from `GET /v1/models`.'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          example: {error: {message: 'unknown model, see GET /v1/models', type: invalid_request_error, code: model_not_found, param: model}}
+    AsrPayloadTooLarge:
+      description: |
+        `payload_too_large` (param `file`): the body is over the size limit.
+        Send a smaller file. `model_must_precede_file` (param `model`): the
+        body is large and the service did not find `model` before the limit.
+        Send `?model=`, or put the `model` part before the `file` part.
+        `invalid_audio` (param `file`) can also come with 413 when the audio
+        file is too large.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          example: {error: {message: the request body is too large, type: invalid_request_error, code: payload_too_large, param: file}}
+    AsrRateLimited:
+      description: '`rate_limit_exceeded`: too many calls. Wait the `Retry-After` seconds.'
+      headers:
+        Retry-After:
+          schema: {type: integer}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          example: {error: {message: 'rate limit exceeded, retry shortly', type: invalid_request_error, code: rate_limit_exceeded}}
+    AsrInternalError:
+      description: '`internal_error` or `transcription_failed`: the transcription failed. Send the call again. If it fails again, contact support.'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          example: {error: {message: transcription failed, type: server_error, code: transcription_failed}}
+    AsrUnavailable:
+      description: |
+        The service cannot take the call now. Wait, then send the call again.
+        `code`:
+
+        - `deployment_stopped`: the model is outside its service hours.
+          `Retry-After` gives the seconds until the next start.
+        - `deployment_starting`: the model is starting. `Retry-After` is
+          currently 60.
+        - `deployment_stopping`: the model is about to stop. `Retry-After` is
+          currently 60.
+        - `backend_warming`: the service is getting ready, for example at the
+          first call after the service hours start. Wait the `Retry-After` seconds.
+        - `server_overloaded`: the service is at capacity. Wait the
+          `Retry-After` seconds.
+        - `model_unavailable`: the model is listed but not yet available
+          (`flash-asr`, `light-asr`). No `Retry-After`. Use `omni-asr`.
+        - `longform_at_capacity`: too many long files at the same time. Wait,
+          then send the call again.
+        - `service_unavailable`: the service is not reachable now. Retry after
+          `Retry-After` when present.
+      headers:
+        Retry-After:
+          description: Seconds to wait before the next call.
+          schema: {type: integer}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          examples:
+            deployment_stopped:
+              value: {error: {message: 'the transcription service is stopped, retry later', type: server_error, code: deployment_stopped}}
+            deployment_starting:
+              value: {error: {message: 'the transcription service is booting, retry shortly', type: server_error, code: deployment_starting}}
+            deployment_stopping:
+              value: {error: {message: 'the transcription service is stopping, retry later', type: server_error, code: deployment_stopping}}
+            backend_warming:
+              value: {error: {message: 'the transcription service is starting, retry shortly', type: server_error, code: backend_warming}}
+            server_overloaded:
+              value: {error: {message: 'the transcription service is at capacity, retry shortly', type: server_error, code: server_overloaded}}
+            model_unavailable:
+              value: {error: {message: model unavailable, type: server_error, code: model_unavailable}}
+    AsrTimeout:
+      description: '`request_timeout`: the call took too long. Send a shorter file, or send the call again.'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AsrError'}
+          example: {error: {message: transcription timed out, type: server_error, code: request_timeout}}
   schemas:
     SpeechRequest:
       type: object
@@ -1100,119 +1256,113 @@ components:
           type: string
           description: The successor key. Shown once.
         expires_at: {type: integer}
-    TranscriptionRequest:
+    TranscriptionForm:
       type: object
-      required: [messages, max_tokens]
-      additionalProperties: false
+      required: [file, model]
+      description: 'The form fields. Put `model` before `file`, or send `?model=`. The service reads the other fields.'
       properties:
-        messages:
+        model:
+          type: string
+          example: omni-asr
+          description: 'A speech-to-text id of `GET /v1/models`. A free string.'
+        file:
+          type: string
+          format: binary
+          description: 'The audio file: WAV, MP3, AAC, FLAC, or Ogg. Any sample rate and any channel count. A long file is cut into parts, and the text of the parts is joined. A file that the service cannot decode, or that is too long, returns 400 `invalid_audio`.'
+        language:
+          type: string
+          example: fr
+          description: 'The language of the speech, an ISO 639 code (`fr`, `fr-FR`, `lb`). With no value, or `auto`, the service transcribes Luxembourgish: set it on every call. `flash-asr` and `light-asr` take `lb` only.'
+        response_format:
+          type: string
+          enum: [json, text, srt, vtt, verbose_json, ssml]
+          default: json
+          description: 'The answer format. `json` gives `{"text"}`. `verbose_json` adds the language, the duration and the segments. `text` is plain text. `srt` and `vtt` are subtitles. `ssml` is the text as SSML, built with the word times.'
+        stream:
+          type: boolean
+          default: false
+          description: '`true` sends the text as server-sent events (`text/event-stream`). Needs `response_format` `json` or `text`.'
+        timestamp_granularities[]:
           type: array
-          minItems: 1
-          items: {$ref: '#/components/schemas/TranscriptionMessage'}
-        max_tokens:
-          type: integer
-          minimum: 1
-          maximum: 2048
-          description: Output token cap. Use 10 per second of audio plus 32.
-        temperature: {type: number, minimum: 0, maximum: 2, description: 0 gives the most stable transcript.}
-        stream: {type: boolean, default: false, description: true sends the text as server-sent events.}
-        stream_options:
+          items: {type: string, enum: [word, segment]}
+          description: 'The timestamps to add. Needs `response_format=verbose_json`. Repeat the field for each value. `word` adds `words` to the answer.'
+    Transcription:
+      type: object
+      required: [text]
+      description: The answer of `response_format=json`.
+      properties:
+        text: {type: string, description: The transcript.}
+      example: {"text":"Bonjour, ceci est un test de transcription."}
+    TranscriptionVerbose:
+      type: object
+      required: [task, language, duration, text, segments]
+      description: 'The answer of `response_format=verbose_json`. The answer can hold more fields. Ignore a field that you do not know.'
+      properties:
+        task: {type: string, example: transcribe}
+        language: {type: string, example: fr}
+        duration: {type: number, description: The audio duration in seconds.}
+        text: {type: string, description: The transcript.}
+        segments:
+          type: array
+          items:
+            type: object
+            required: [id, start, end, text]
+            properties:
+              id: {type: integer}
+              start: {type: number, description: Seconds from the start of the audio.}
+              end: {type: number, description: Seconds from the start of the audio.}
+              text: {type: string}
+        words:
+          type: array
+          description: 'Present when `timestamp_granularities[]` has `word` and the service finds word times.'
+          items:
+            type: object
+            required: [word, start, end]
+            properties:
+              word: {type: string}
+              start: {type: number}
+              end: {type: number}
+        usage:
           type: object
-          additionalProperties: false
           properties:
-            include_usage: {type: boolean, description: true adds one last event with the token counts.}
-    TranscriptionMessage:
+            type: {type: string, const: duration}
+            seconds: {type: number, description: The audio seconds of the call.}
+    TranscriptionStreamEvent:
       type: object
-      required: [role, content]
-      additionalProperties: false
+      required: [type]
+      description: 'One event of a streamed transcript. `type` is `transcript.text.delta`, `transcript.text.done`, or `error`. Ignore a type that you do not know.'
       properties:
-        role: {type: string, enum: [user]}
-        content:
-          type: array
-          minItems: 1
-          items:
-            oneOf:
-              - type: object
-                required: [type, text]
-                additionalProperties: false
-                properties:
-                  type: {type: string, enum: [text]}
-                  text: {type: string, description: 'The instruction, for example the language and the output form.'}
-              - type: object
-                required: [type, audio_url]
-                additionalProperties: false
-                properties:
-                  type: {type: string, enum: [audio_url]}
-                  audio_url:
-                    type: object
-                    required: [url]
-                    additionalProperties: false
-                    properties:
-                      url:
-                        type: string
-                        pattern: '^data:audio/wav;base64,'
-                        description: The audio as a base64 WAV `data:` URL. Mono 16000 Hz PCM is a good input.
-    TranscriptionUsage:
+        type: {type: string, enum: [transcript.text.delta, transcript.text.done, error]}
+        delta: {type: string, description: 'With `transcript.text.delta`: the next part of the transcript. Join the parts in order.'}
+        text: {type: string, description: 'With `transcript.text.done`: the full transcript. The stream ends after it.'}
+        error:
+          $ref: '#/components/schemas/AsrErrorObject'
+    AsrError:
       type: object
+      required: [error]
+      description: The error shape of the transcription route.
       properties:
-        prompt_tokens: {type: integer}
-        completion_tokens: {type: integer}
-        total_tokens: {type: integer}
-    TranscriptionResponse:
+        error: {$ref: '#/components/schemas/AsrErrorObject'}
+    AsrErrorObject:
       type: object
-      required: [id, object, model, choices]
+      required: [message, type, code]
       properties:
-        id: {type: string, example: chatcmpl-6f1c0b8e2d4a4b0f9c3e5a7d1b2c3d4e}
-        object: {type: string, enum: [chat.completion]}
-        created: {type: integer, description: Unix seconds.}
-        model: {type: string, example: omni-asr, description: The public id of the speech-to-text service.}
-        choices:
-          type: array
-          items:
-            type: object
-            properties:
-              index: {type: integer}
-              message:
-                type: object
-                properties:
-                  role: {type: string, enum: [assistant]}
-                  content: {type: string, description: The transcript.}
-              finish_reason: {type: [string, 'null'], enum: [stop, length, null], description: '`length`: the output hit `max_tokens`.'}
-        usage: {$ref: '#/components/schemas/TranscriptionUsage'}
-    TranscriptionChunk:
-      type: object
-      description: One server-sent event of a streamed transcript.
-      required: [id, object, model, choices]
-      properties:
-        id: {type: string, description: The same id on every event of one answer.}
-        object: {type: string, enum: [chat.completion.chunk]}
-        created: {type: integer}
-        model: {type: string, example: omni-asr}
-        choices:
-          type: array
-          items:
-            type: object
-            properties:
-              index: {type: integer}
-              delta:
-                type: object
-                properties:
-                  role: {type: string, enum: [assistant]}
-                  content: {type: string, description: The next part of the transcript.}
-              finish_reason: {type: [string, 'null'], enum: [stop, length, null]}
-        usage: {$ref: '#/components/schemas/TranscriptionUsage'}
+        message: {type: string, description: 'Text for people. Do not parse it.'}
+        type: {type: string, enum: [invalid_request_error, authentication_error, server_error]}
+        code: {type: string, description: 'A stable machine-readable code. New codes can appear.', example: model_not_found}
+        param: {type: string, description: 'The field at fault. Absent when no field is at fault.', example: model}
     ModelInfo:
       type: object
       required: [id, object, owned_by, description]
       properties:
-        id: {type: string, description: The model alias. Pass it as `model`., example: hulotte}
+        id: {type: string, description: 'The model id: a synth alias, or a speech-to-text id. Pass it as `model`.', example: hulotte}
         object: {type: string, const: model}
         owned_by: {type: string, example: frugale}
-        description: {type: string, example: Model alias.}
+        description: {type: string, enum: [Model alias., Speech-to-text model.], example: Model alias.}
     ModelsList:
       type: object
       required: [object, data]
-      example: {"object":"list","data":[{"id":"hulotte","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"chevechette","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"linotte","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"lyre","object":"model","owned_by":"frugale","description":"Model alias."}]}
+      example: {"object":"list","data":[{"id":"chevechette","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"flash-asr","object":"model","owned_by":"frugale","description":"Speech-to-text model."},{"id":"hulotte","object":"model","owned_by":"frugale","description":"Model alias."},{"id":"light-asr","object":"model","owned_by":"frugale","description":"Speech-to-text model."},{"id":"omni-asr","object":"model","owned_by":"frugale","description":"Speech-to-text model."}]}
       properties:
         object: {type: string, const: list}
         data:

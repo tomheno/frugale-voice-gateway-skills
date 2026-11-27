@@ -16,7 +16,11 @@ curl -sS -L --max-redirs 60 --retry 12 --retry-delay 15 --retry-all-errors \
 ```
 
 The reply is `{object:"list", data:[{id, object:"model", owned_by:"frugale", description}]}`.
-The `id` is the alias you pass as `model`. Omit `model` to use the default model.
+An entry with the description `Model alias.` is a synth model: its `id` is the
+alias you pass as `model` to `/v1/audio/speech`. An entry with the description
+`Speech-to-text model.` is a transcription model, not a synth `model` value (see
+`transcription.md`).
+Omit `model` to use the default model.
 
 An unknown alias returns HTTP 400 on `/v1/audio/speech`. The `detail` text is
 `invalid input: unknown model: <alias>`. In a batch, every item fails with the

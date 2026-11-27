@@ -45,6 +45,14 @@ then send the synth control frames. Connect from a server-side client. Use `/v1/
 client. Use `/v1/audio/speech/stream` for a plain synth stream that returns
 binary audio frames.
 
+The `/v1/realtime` door reads one query key, `intent`:
+
+| query | door |
+|---|---|
+| no `intent` key, or any value other than `transcription` | the TTS door (this runbook) |
+| `intent=transcription` | the speech-to-text mode: send audio, receive text (`transcription.md`, `asyncapi.yaml`). It never opens a TTS session |
+| the `intent` key more than once | HTTP 403 `application/problem+json` before the upgrade |
+
 ### Session contract (`/v1/audio/speech/stream`)
 
 One session carries many utterances. The gateway keeps the socket open until

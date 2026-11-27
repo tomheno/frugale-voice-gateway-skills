@@ -4,8 +4,8 @@ Two spec files describe the full public API. Load them before you write a client
 
 | file | covers |
 |---|---|
-| `public/openapi.yaml` | OpenAPI 3.1. HTTP plane: synth, batch, voices, models, proxy keys, transcription preview (`/v0`) |
-| `public/asyncapi.yaml` | AsyncAPI 3.0. WSS plane: `/v1/audio/speech/stream` and `/v1/realtime` |
+| `public/openapi.yaml` | OpenAPI 3.1. HTTP plane: synth, batch, voices, models, proxy keys, transcription (`POST /v1/audio/transcriptions`) |
+| `public/asyncapi.yaml` | AsyncAPI 3.0. WSS plane: `/v1/audio/speech/stream`, `/v1/realtime` (synth, and speech-to-text with `?intent=transcription`), and `/v1/speech-to-text/realtime` |
 
 ## Steps
 

@@ -10,7 +10,7 @@ format. Each runbook gives the exact request for one task.
 
 | App | Base URL | Serves |
 |---|---|---|
-| SYNTH | `https://api-otem.confidential-intelligence.com` | synth, batch, streaming, voices, models, transcription (preview) |
+| SYNTH | `https://api-otem.confidential-intelligence.com` | synth, batch, streaming, voices, models, speech-to-text |
 | ADMIN | `https://admin-otem.confidential-intelligence.com` | the key lifecycle (mint / rotate / revoke / list) |
 
 The SYNTH host also answers at `https://api-otem.confidential-intelligence.lu`.
@@ -52,7 +52,7 @@ export KEY="<your proxy key>"
 | `runbooks/models-and-formats.md` | the models + the audio formats, and how to pick |
 | `runbooks/opus-raw-decode.md` | decode the compact `opus_raw` format in your app |
 | `runbooks/streaming.md` | stream audio as it renders (advanced): mu-law output, cancel (barge-in), a later `session.config`, and the latency guide (HTTP stream or WSS, how to tune a client) |
-| `runbooks/transcription.md` | transcribe an audio clip to text, JSON or streamed (preview, consumer) |
+| `runbooks/transcription.md` | transcribe an audio file to text (JSON, subtitles, or streamed events), or live audio over a WebSocket (consumer) |
 
 ## Limits
 
@@ -68,5 +68,5 @@ export KEY="<your proxy key>"
 Two spec files describe the full API. Load them in an agent or a code generator.
 
 - `openapi.yaml`: the HTTP API (OpenAPI 3.1).
-- `asyncapi.yaml`: the two WSS doors (AsyncAPI 3.0).
+- `asyncapi.yaml`: the WSS doors for speech synthesis and live speech-to-text (AsyncAPI 3.0).
 - `runbooks/api-specs.md`: how to load them and the hard limits.

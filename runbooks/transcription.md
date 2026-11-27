@@ -1,211 +1,353 @@
-# Transcribe audio (preview)
+# Transcribe audio
 
-Turn one audio clip into text. The `/v0` routes are a preview. A stable `/v1`
-transcription route replaces them later.
+Turn speech into text. Three doors:
 
-Auth: a `consumer` key. You can use the same key for synthesis.
+| door | route | use it for |
+|---|---|---|
+| File | `POST /v1/audio/transcriptions` | one audio file: the text as JSON, plain text, subtitles, or a stream of text events |
+| Speech-to-text stream | `GET /v1/speech-to-text/realtime` (WebSocket) | live audio: send chunks, receive partial and final text |
+| Realtime, transcription mode | `GET /v1/realtime?intent=transcription` (WebSocket) | live audio in a realtime session: append audio, receive text deltas |
 
-## Steps
+Auth: a `consumer` key. You can use the same key for synthesis. The full
+contract is in `openapi.yaml` (the file door) and `asyncapi.yaml` (the two
+WebSocket doors).
 
-1. Convert the clip to WAV, mono, 16000 Hz:
+## Models
 
-```bash
-ffmpeg -i input.m4a -ar 16000 -ac 1 -c:a pcm_s16le clip.wav
-```
+Read the speech-to-text ids from `GET /v1/models`: the entries with the
+description `Speech-to-text model.`. Pass the id as `model` (the file door), as
+`model_id` (the stream door), or as `session.audio.input.transcription.model`
+(the realtime door).
 
-2. Build the request. Put the audio in a base64 `data:` URL. The `text` part
-   is your instruction. Set `max_tokens` to 10 per second of audio plus 32, at
-   most 2048.
+| model | languages | state |
+|---|---|---|
+| `omni-asr` | any valid tag, for example `fr`, `de`, `en`, `lb` | available |
+| `flash-asr` | `lb` | listed, not yet available: 503 `model_unavailable` |
+| `light-asr` | `lb` | listed, not yet available: 503 `model_unavailable` |
 
-```bash
-B64="$(base64 < clip.wav | tr -d '\n')"
-cat > req.json <<EOF
-{"messages":[{"role":"user","content":[
-  {"type":"text","text":"Audio transcription. Output: transcript only."},
-  {"type":"audio_url","audio_url":{"url":"data:audio/wav;base64,${B64}"}}]}],
- "max_tokens":200,"temperature":0}
-EOF
-```
+## Language
 
-3. Write the key header to a file once. The key then stays out of the command line:
+Set the language of the speech on every call: `language` (the file door),
+`language_code` (the stream door), or
+`session.audio.input.transcription.language` (the realtime door). Use an ISO
+639 code, for example `fr`, `de`, `en`, `lb`. A regional tag such as `fr-FR`
+counts as `fr`.
+
+- With no language, or with `auto`, the service transcribes Luxembourgish. It
+  does not detect the language.
+- `omni-asr` takes any valid tag. `flash-asr` and `light-asr` take `lb` only.
+- A language that the model does not take: the file door returns 400
+  `invalid_value` with `param` `language`. A WebSocket door sends an error
+  event.
+
+## Service hours
+
+A speech-to-text model has service hours. Plan for these answers:
+
+- Outside the service hours, the file door returns 503 `deployment_stopped`
+  with a `Retry-After` header: the seconds until the next start. A WebSocket
+  door closes a new session with code 1013 and the reason `deployment_stopped`.
+- Around the start and the stop of the service hours, the file door returns 503
+  `deployment_starting` or `deployment_stopping` with `Retry-After`. A
+  WebSocket door closes with 1013 and that code as the reason.
+- The first calls after the service hours start can get a short 503
+  `backend_warming` with `Retry-After` (a WebSocket door: close 1013). Wait,
+  then send the call again.
+
+Wait the `Retry-After` seconds, then retry. A WebSocket close has no
+`Retry-After`: wait a few seconds, then open a new session.
+
+## Transcribe a file
+
+Set your shell (see `../README.md`): `SYNTH` and `KEY` (a `consumer` key).
+
+1. Write the key header to a file once. The key then stays out of the command line:
 
 ```bash
 (umask 077 && printf 'Authorization: Bearer %s\n' "$KEY" > auth.hdr)
 ```
 
-4. Send the request. Set the spoken language with `X-Language` (or `?language=`):
+2. Send the file. Put `model` before `file`: the order of the `-F` options is the
+   order of the form parts.
 
 ```bash
-curl -sS "$SYNTH/v0/chat/completions" \
-  -H @auth.hdr -H "Content-Type: application/json" \
-  -H "X-Language: fr" --data-binary @req.json
+curl -sS "$SYNTH/v1/audio/transcriptions" -H @auth.hdr \
+  -F model=omni-asr -F language=fr -F file=@clip.wav
 ```
 
-5. Read the transcript in `choices[0].message.content`.
+3. Read the text in `text`:
 
-## Language
+```json
+{"text":"Bonjour, ceci est un test de transcription."}
+```
 
-| `X-Language` or `?language=` | route |
+`response_format` picks the answer:
+
+| `response_format` | answer |
 |---|---|
-| `lb`, `ltz`, or none | Luxembourgish |
-| any other code, for example `fr`, `de`, `en` | multilingual |
+| `json` (the default) | `{"text": "..."}` |
+| `text` | plain text |
+| `srt` | SubRip subtitles |
+| `vtt` | WebVTT subtitles |
+| `verbose_json` | JSON with `language`, `duration`, and `segments` |
+| `ssml` | the text as SSML, built with the word times |
 
-A regional tag such as `fr-FR` counts as `fr`.
+Word timestamps: add `-F response_format=verbose_json -F 'timestamp_granularities[]=word'`.
+The answer has `words`, each with `word`, `start` and `end` in seconds.
+`omni-asr` gives word times in every language. `words` is absent when the
+service finds no word times in the audio. A timestamp field without
+`verbose_json` returns 400 `timestamp_granularities_require_verbose_json`.
 
-## Stream the text
+`prompt` is not supported: it returns 400 `unsupported_parameter`.
 
-Use streaming for long clips: the first words come before the full transcript. You still send the whole clip in one
-request. On a short clip, the full text comes almost at once.
+## Stream the text of a file
 
-1. Add `"stream": true` to the request. Add `"stream_options": {"include_usage": true}` for the token counts.
+Use streaming for long files: the first words come before the full transcript.
+You still send the whole file in one request.
+
+1. Add `-F stream=true`, and send with `-N` so that cURL prints each event when
+   it comes. `stream=true` needs `response_format` `json` (the default) or `text`.
 
 ```bash
-python3 -c 'import json; d = json.load(open("req.json")); d["stream"] = True; d["stream_options"] = {"include_usage": True}; json.dump(d, open("req-stream.json", "w"))'
+curl -sS -N "$SYNTH/v1/audio/transcriptions" -H @auth.hdr \
+  -F model=omni-asr -F language=fr -F stream=true -F file=@clip.wav
 ```
 
-2. Send it with `-N`, so that cURL prints each event when it comes:
-
-```bash
-curl -sS -N "$SYNTH/v0/chat/completions" \
-  -H @auth.hdr -H "Content-Type: application/json" \
-  -H "X-Language: fr" --data-binary @req-stream.json
-```
-
-3. Read the events. The answer is `text/event-stream`. Each event is one line `data: <JSON>` and a blank line. A real
-   answer:
+2. Read the events. The answer is `text/event-stream`. Each event is one line
+   `data: <JSON>` and a blank line:
 
 ```log
-data: {"id":"chatcmpl-4c786dd6f00b478a982e94962699fe36","object":"chat.completion.chunk","created":1794485689,"model":"omni-asr","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+data: {"type":"transcript.text.delta","delta":"Bonjour, ceci est"}
 
-data: {"id":"chatcmpl-4c786dd6f00b478a982e94962699fe36","object":"chat.completion.chunk","created":1794485689,"model":"omni-asr","choices":[{"index":0,"delta":{"content":"Bon"},"finish_reason":null}]}
+data: {"type":"transcript.text.delta","delta":" un test de transcription."}
 
-data: {"id":"chatcmpl-4c786dd6f00b478a982e94962699fe36","object":"chat.completion.chunk","created":1794485689,"model":"omni-asr","choices":[{"index":0,"delta":{"content":"jour, ceci est un test de transcription en"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-4c786dd6f00b478a982e94962699fe36","object":"chat.completion.chunk","created":1794485689,"model":"omni-asr","choices":[{"index":0,"delta":{"content":" direct, le douze novembre."},"finish_reason":"stop"}]}
-
-data: {"id":"chatcmpl-4c786dd6f00b478a982e94962699fe36","object":"chat.completion.chunk","created":1794485689,"model":"omni-asr","choices":[],"usage":{"prompt_tokens":89,"completion_tokens":17,"total_tokens":106}}
-
-data: [DONE]
+data: {"type":"transcript.text.done","text":"Bonjour, ceci est un test de transcription."}
 ```
 
-- Join the `choices[0].delta.content` parts in order: they make the transcript.
-- `finish_reason` is `stop` at the end of the text, or `length` when the text hit `max_tokens`.
-- With `include_usage`, the last chunk before `[DONE]` has `"choices": []` and the token counts.
-- `data: [DONE]` ends a good stream.
-- If the service fails during the stream, the last event is `data: {"detail":"upstream_error"}` and no `[DONE]` comes
-  after it. Treat the transcript as incomplete and send the request again.
-
-### Python
-
-Needs `requests`. Set `SYNTH` and `KEY` in the environment.
-
-```python
-import json
-import os
-
-import requests
-
-body = json.load(open("req.json"))
-body["stream"] = True
-body["stream_options"] = {"include_usage": True}
-headers = {"Authorization": f"Bearer {os.environ['KEY']}", "X-Language": "fr"}
-
-with requests.post(f"{os.environ['SYNTH']}/v0/chat/completions", headers=headers, json=body, stream=True, timeout=300) as r:
-    r.raise_for_status()
-    r.encoding = "utf-8"  # the events are UTF-8 JSON
-    for line in r.iter_lines(decode_unicode=True):
-        if not line.startswith("data: "):
-            continue
-        data = line[len("data: "):]
-        if data == "[DONE]":
-            break
-        event = json.loads(data)
-        if "detail" in event:
-            raise RuntimeError(f"stream failed: {event['detail']}")
-        for choice in event["choices"]:
-            print(choice["delta"].get("content", ""), end="", flush=True)
-        if "usage" in event:
-            print(f"\n{event['usage']['completion_tokens']} tokens")
-```
-
-Keep `r.encoding = "utf-8"`. Without it, `requests` reads the events as Latin-1 and breaks accented letters.
-
-### JavaScript (Node.js 18 or later)
-
-Set `SYNTH` and `KEY` in the environment. Save as `stream.mjs`.
-
-```js
-import { readFileSync } from "node:fs";
-
-const body = JSON.parse(readFileSync("req.json", "utf8"));
-body.stream = true;
-body.stream_options = { include_usage: true };
-
-const res = await fetch(`${process.env.SYNTH}/v0/chat/completions`, {
-  method: "POST",
-  headers: { Authorization: `Bearer ${process.env.KEY}`, "Content-Type": "application/json", "X-Language": "fr" },
-  body: JSON.stringify(body),
-});
-if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-
-const decoder = new TextDecoder();
-let buffer = "";
-read: for await (const chunk of res.body) {
-  buffer += decoder.decode(chunk, { stream: true });
-  let end;
-  while ((end = buffer.indexOf("\n\n")) !== -1) {
-    const line = buffer.slice(0, end);
-    buffer = buffer.slice(end + 2);
-    if (!line.startsWith("data: ")) continue;
-    const data = line.slice("data: ".length);
-    if (data === "[DONE]") break read;
-    const event = JSON.parse(data);
-    if (event.detail) throw new Error(`stream failed: ${event.detail}`);
-    for (const choice of event.choices) process.stdout.write(choice.delta.content ?? "");
-    if (event.usage) console.log(`\n${event.usage.completion_tokens} tokens`);
-  }
-}
-```
-
-An event can arrive in more than one network chunk. Keep the text after the last blank line in the buffer, as above.
+- Join the `delta` parts in order: they make the transcript.
+- `transcript.text.done` carries the full text and ends the stream. There is no
+  `[DONE]` line.
+- If the transcription fails during the stream, the last event is
+  `{"type":"error","error":{...}}`, with no `transcript.text.done`. Treat the
+  transcript as incomplete and send the request again.
+- Ignore an event type that you do not know.
 
 ## Custom vocabulary
 
-Add the `hotwords` query parameter to give the service names and terms that it must write correctly, for example a brand: `?hotwords=Acme,Kirchberg`.
-Separate the terms with commas, or repeat the parameter. Each term has 1 to 50 characters: letters, digits, space, `'`, `.`, `&`,
-`+`, `-`. Encode `+` as `%2B` and `&` as `%26`. Send at most 50 terms. A term outside these rules returns 400 `invalid_request`.
+Give the service names and terms that it must write correctly, for example a
+brand. On the file door, add the `hotwords` query parameter:
 
 ```bash
-curl -sS "$SYNTH/v0/chat/completions?hotwords=Acme,Kirchberg" \
-  -H @auth.hdr -H "Content-Type: application/json" \
-  -H "X-Language: fr" --data-binary @req.json
+curl -sS "$SYNTH/v1/audio/transcriptions?hotwords=Acme,Kirchberg" -H @auth.hdr \
+  -F model=omni-asr -F language=fr -F file=@clip.wav
 ```
 
-The `hotwords` parameter works with `"stream": true` too.
+- Separate the terms with commas, or repeat the parameter.
+- Each term has 1 to 50 characters: letters, digits, space, `'`, `.`, `&`, `+`,
+  `-`, with at least one letter or digit. Encode `+` as `%2B` and `&` as `%26`.
+- Currently at most 50 terms. A list that breaks these rules returns 400
+  `invalid_value` with `param` `hotwords`.
+- Send the terms in the query. A form field `hotwords` or `keywords` returns
+  400 `unsupported_parameter`.
+- Only `omni-asr` takes hotwords.
+- The stream door takes the same terms in the `keyterms` query key. The
+  realtime door takes them as an array in
+  `session.audio.input.transcription.keywords`.
+
+## Live audio: the speech-to-text stream door
+
+The stream door takes live audio in chunks and sends the text back. Open it
+with a WebSocket client. Set the model, the audio format and the language in
+the query. The key goes in the `xi-api-key` header, or in
+`Authorization: Bearer <key>`.
+
+1. Convert a test clip to raw 16000 Hz mono PCM in a WAV file:
+
+```bash
+ffmpeg -i input.m4a -ar 16000 -ac 1 -c:a pcm_s16le clip16k.wav
+```
+
+2. Run the client. It needs Python 3.10 or later and `websockets` 14 or later.
+   Set `KEY` in the environment. Use a clip shorter than 30 seconds.
+
+```python
+import asyncio
+import base64
+import json
+import os
+import wave
+
+import websockets
+
+URL = (
+    "wss://api-otem.confidential-intelligence.com/v1/speech-to-text/realtime"
+    "?model_id=omni-asr&audio_format=pcm_16000&language_code=fr"
+)
+
+
+async def main():
+    headers = {"xi-api-key": os.environ["KEY"]}
+    async with websockets.connect(URL, additional_headers=headers) as ws:
+        print(json.loads(await ws.recv())["message_type"])  # session_started
+        with wave.open("clip16k.wav") as wav:
+            chunks = []
+            while chunk := wav.readframes(8000):  # 0.5 s of audio
+                chunks.append(chunk)
+        for i, chunk in enumerate(chunks):
+            await ws.send(json.dumps({
+                "message_type": "input_audio_chunk",
+                "audio_base_64": base64.b64encode(chunk).decode(),
+                "commit": i == len(chunks) - 1,  # commit the last chunk
+                "sample_rate": 16000,
+            }))
+            await asyncio.sleep(0.5)  # send at the speed of speech
+        async for frame in ws:
+            event = json.loads(frame)
+            kind = event["message_type"]
+            if kind == "partial_transcript":
+                print("partial:", event["text"])
+            elif kind == "committed_transcript":
+                print("final:", event["text"])
+                break
+            elif kind not in ("session_started", "warning"):
+                raise RuntimeError(f"{kind}: {event.get('error')}")
+
+
+asyncio.run(main())
+```
+
+- `audio_format` is `pcm_16000` by default. Other rates and 8000 Hz mu-law are in
+  `asyncapi.yaml`. `sample_rate` in each chunk must be the rate of `audio_format`.
+- Send short chunks: currently at most 1 second of audio in one chunk.
+- With `commit_strategy=manual` (the default), `commit: true` ends a segment.
+  With `commit_strategy=vad`, the server commits at each pause in the speech.
+- Each commit gives `partial_transcript` events, then one `committed_transcript`.
+- Add `include_timestamps=true` for `committed_transcript_with_timestamps`,
+  with the word times from the start of the session.
+- The session closes with 1008 after currently 15 seconds with no message from
+  you, and at its time limit (currently less than 10 minutes).
+
+## Live audio: the realtime door, transcription mode
+
+The realtime door has a transcription mode. Open `/v1/realtime` with
+`?intent=transcription`, send `session.update`, then append audio.
+
+1. Convert a test clip to raw 24000 Hz mono PCM in a WAV file:
+
+```bash
+ffmpeg -i input.m4a -ar 24000 -ac 1 -c:a pcm_s16le clip24k.wav
+```
+
+2. Run the client. It needs Python 3.10 or later and `websockets` 14 or later.
+   Set `KEY` in the environment.
+
+```python
+import asyncio
+import base64
+import json
+import os
+import wave
+
+import websockets
+
+URL = "wss://api-otem.confidential-intelligence.com/v1/realtime?intent=transcription"
+UPDATE = {
+    "type": "session.update",
+    "session": {
+        "type": "transcription",
+        "audio": {"input": {
+            "format": {"type": "audio/pcm", "rate": 24000},
+            "transcription": {"model": "omni-asr", "language": "fr"},
+            "turn_detection": None,  # you commit
+        }},
+    },
+}
+
+
+async def main():
+    headers = {"Authorization": f"Bearer {os.environ['KEY']}"}
+    async with websockets.connect(URL, additional_headers=headers) as ws:
+        print(json.loads(await ws.recv())["type"])  # session.created
+        await ws.send(json.dumps(UPDATE))
+        while (event := json.loads(await ws.recv()))["type"] != "session.updated":
+            if event["type"] == "error":
+                raise RuntimeError(event["error"]["code"])
+        with wave.open("clip24k.wav") as wav:
+            while chunk := wav.readframes(12000):  # 0.5 s of audio
+                await ws.send(json.dumps({
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(chunk).decode(),
+                }))
+                await asyncio.sleep(0.5)  # send at the speed of speech
+        await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
+        async for frame in ws:
+            event = json.loads(frame)
+            if event["type"] == "conversation.item.input_audio_transcription.delta":
+                print(event["delta"], end="", flush=True)
+            elif event["type"] == "conversation.item.input_audio_transcription.completed":
+                print("\nfinal:", event["transcript"])
+                break
+            elif event["type"] in ("error", "conversation.item.input_audio_transcription.failed"):
+                raise RuntimeError(event["error"]["code"])
+
+
+asyncio.run(main())
+```
+
+- `session.type` is `transcription` in every `session.update`. The audio is
+  PCM16 at 24000 Hz (the default) or 16000 Hz, mono, base64 in `audio`.
+- There is no default model: set `session.audio.input.transcription.model`.
+- `turn_detection` `null` means that you commit with `input_audio_buffer.commit`.
+  `{"type": "server_vad"}` makes the server commit at each pause.
+- After the model is set, the config is locked: a `session.update` that changes
+  it gets the error `session_config_locked`. Open a new session to change it.
+- Use the `transcript` of the `completed` event as the final text.
+- This door gives no word timestamps.
+- The session closes with 1008 after currently 15 seconds with no event from
+  you while no commit is in work. It also ends at its time limit (currently
+  less than 10 minutes) with the error `session_time_limit_exceeded` and the
+  close 1008.
 
 ## Limits
 
-- At most 600 calls a minute per key. The service counts the calls of a key
-  separately for each caller location. A key that calls from more than one
-  location can send more than 600 calls in total. Plan for 600. Above the limit:
-  429 `rate_limited`. Wait the `Retry-After` seconds.
-- `max_tokens` at most 2048. A clip longer than about 200 seconds needs more:
-  split it into parts.
-- The body is JSON in UTF-8. Send `Content-Type: application/json`. Do not
-  compress the body.
-- The audio is a WAV `data:` URL. Send the audio itself, not a link to it.
+These are the current values. They can change.
 
-## Errors
+- The file door body is currently at most 100000000 bytes (about 95 MiB).
+  Above it: 413 `payload_too_large`. With a large file, send `model` before
+  `file`, or add `?model=omni-asr`: else the call can fail with 413
+  `model_must_precede_file`.
+- A file call that takes more than 290 seconds ends with 504
+  `request_timeout`. Send a shorter file.
+- Too many calls at the same time: 503 `server_overloaded` with `Retry-After`.
+  Too many calls for your key: 429 `rate_limit_exceeded` with `Retry-After`.
+- A WebSocket session ends at its time limit, currently less than 10 minutes.
+  Open a new one to go on.
 
-Every error is `{"detail": "<code>"}`.
+## Errors (file door)
+
+Every error is `{"error": {"message", "type", "code", "param"}}`. Test `code`.
+`message` is text for people: do not parse it. `param` names the field at fault.
 
 | status | code | next step |
 |---|---|---|
-| 400 | `invalid_request` | The body breaks a rule: no audio part, no `max_tokens`, `max_tokens` above 2048, or a field outside the request schema (`model` or `n`). The body is not UTF-8 JSON, or a `hotwords` term breaks the rules. Fix the request. |
-| 400 | `bad_request` | The service refused the request. Check the message shape. |
-| 401 | `unauthorized` | Use a valid, unexpired `consumer` key. |
-| 413 | `body_too_large` | Send a shorter clip. |
-| 429 | `rate_limited` | Wait `Retry-After` seconds. |
-| 502 | `upstream_error` | Retry. |
-| 503 | `asr_unavailable` | The service is not ready. Retry after `Retry-After` when present. |
-| 503 | `auth_unavailable` | Retry. |
+| 400 | `missing_model` | Send `model`. |
+| 400 | `invalid_value` | Fix the field in `param`: `language` (the model does not support it), `hotwords`, or `model`. |
+| 400 | `invalid_multipart` | Send `multipart/form-data`. |
+| 400 | `invalid_audio` | Send audio that the service can decode, or a shorter file. |
+| 400 | `unsupported_response_format` | Use `json`, `text`, `srt`, `vtt`, `verbose_json`, or `ssml`. |
+| 400 | `timestamp_granularities_require_verbose_json` | Add `response_format=verbose_json`. |
+| 400 | `word_timestamps_unavailable` | The model gives no word times (for example `flash-asr`). Use `omni-asr`, or another format. |
+| 400 | `stream_requires_json_or_text` | Use `json` or `text` with `stream=true`. |
+| 400 | `unsupported_parameter` | Remove the field in `param` (for example `prompt`). |
+| 401 | `invalid_api_key` | Use a valid, unexpired key. |
+| 404 | `model_not_found` | Use a speech-to-text id of `GET /v1/models`. |
+| 413 | `payload_too_large` | Send a smaller file. |
+| 413 | `model_must_precede_file` | Send `model` before `file`, or add `?model=`. |
+| 429 | `rate_limit_exceeded` | Wait `Retry-After` seconds. |
+| 500 | `transcription_failed` | Send the call again. |
+| 503 | `deployment_stopped` | Outside the service hours. Wait `Retry-After` seconds. |
+| 503 | `deployment_starting`, `deployment_stopping` | Wait `Retry-After` seconds. |
+| 503 | `backend_warming` | The service is getting ready. Wait `Retry-After` seconds. |
+| 503 | `server_overloaded` | Wait `Retry-After` seconds. |
+| 503 | `model_unavailable` | The model is not yet available. Use `omni-asr`. |
+| 504 | `request_timeout` | Send a shorter file, or retry. |
